@@ -5,9 +5,9 @@
 # Two modes:
 #   Full (no args):       Stop ALL running containers, kill GPU processes,
 #                         wait for GPU memory release.  Used by preflight.
-#   Targeted (--container NAME):  Stop a specific container, skip
-#                         SETTLE_WAIT and GPU-PID phases.  Used by
-#                         scancel trap (post-flight).
+#   Targeted (--container NAME):  Kill a specific container immediately
+#                         (SIGKILL, no graceful stop).  Used by scancel
+#                         trap where KillWait budget is tight.
 #
 # Device-agnostic: detects AMD (rocm-smi) or NVIDIA (nvidia-smi) GPUs.
 #
@@ -90,20 +90,14 @@ if [[ -z "$TARGET_CONTAINER" ]]; then
 fi
 
 # =============================================================================
-# Targeted mode: stop a specific container (scancel / post-flight)
+# Targeted mode: kill a specific container (scancel / post-flight)
 # =============================================================================
-# Uses the same proven STOP_TIMEOUT as full mode.  SETTLE_WAIT is skipped —
+# GPU processes ignore SIGTERM (deep in KFD/CUDA), so docker stop -t N wastes
+# N seconds waiting.  Go straight to SIGKILL via docker kill, then rm -f.
 # GPU memory release is the next job's preflight responsibility.
-# Budget: stop -t 20 (up to 20 s) + fallback kill (~2 s) ≈ 22 s worst case,
-# fits within Slurm's KillWait (default 30 s).
+# Budget: kill (~1 s) + rm -f (~1 s) ≈ 2 s, well within Slurm's KillWait.
 
 if [[ -n "$TARGET_CONTAINER" ]]; then
-    "${DOCKER_CMD[@]}" stop -t "$STOP_TIMEOUT" "$TARGET_CONTAINER" 2>&1 || true
-    # Check if the container is still running.
-    if ! "${DOCKER_CMD[@]}" ps -q -f "name=^${TARGET_CONTAINER}$" 2>/dev/null | grep -q .; then
-        exit 0
-    fi
-    # Last resort: bare kill + rm -f.
     "${DOCKER_CMD[@]}" kill "$TARGET_CONTAINER" 2>&1 || true
     "${DOCKER_CMD[@]}" rm -f "$TARGET_CONTAINER" 2>&1 || true
     exit 0
