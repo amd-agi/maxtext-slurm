@@ -2,20 +2,13 @@
 
 # release_gpu.sh - Stop containers and kill GPU processes with retries.
 #
-# Two modes:
-#   Full (no args):       Stop ALL running containers, kill GPU processes,
-#                         wait for GPU memory release.  Used by preflight.
-#   Targeted (--container NAME):  Kill a specific container immediately
-#                         (SIGKILL, no graceful stop).  Used by scancel
-#                         trap where KillWait budget is tight.
+# Modes:
+#   Full (no args):             Stop ALL running containers, kill GPU processes,
+#                               wait for GPU memory release.  Used by preflight.
+#   Targeted (--container NAME): Kill a specific container immediately (SIGKILL).
+#                               Used by scancel trap (tight KillWait budget).
 #
 # Device-agnostic: detects AMD (rocm-smi) or NVIDIA (nvidia-smi) GPUs.
-#
-# Zombie handling:  Zombie processes (Z state) can't be killed — they're
-# already dead but hold GPU memory until the kernel reaps them.  We handle
-# this by (1) killing the zombie's parent so init adopts and reaps it,
-# and (2) giving the container runtime enough time after docker stop to
-# fully tear down PID namespaces and release KFD/GPU memory.
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 
@@ -34,50 +27,88 @@ read -ra DOCKER_CMD <<< "$DOCKER_BIN"
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-STOP_TIMEOUT="${STOP_TIMEOUT:-20}"  # seconds to wait for graceful container stop
-SETTLE_WAIT="${SETTLE_WAIT:-40}"    # seconds after container stop for runtime/KFD cleanup
-KILL_WAIT=5                        # seconds between SIGTERM and SIGKILL
-POLL_INTERVAL=20                   # seconds between GPU-free checks
+STOP_TIMEOUT="${STOP_TIMEOUT:-20}"  # docker stop grace period before SIGKILL
+SETTLE_WAIT="${SETTLE_WAIT:-40}"    # post-kill wait for KFD/GPU memory release
+KILL_WAIT=5                         # gap between SIGTERM and SIGKILL for GPU PIDs
+POLL_INTERVAL=20                    # gap between GPU-free polls
 MAX_RETRIES="${MAX_RETRIES:-10}"
 
-# ── GPU process detection (device-agnostic) ──────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 _get_gpu_pids() {
     local pids=""
-    # AMD: rocm-smi --showpids lists PIDs at the start of each line
     if command -v rocm-smi &>/dev/null; then
         pids+=" $(rocm-smi --showpids 2>/dev/null | grep -oE '^[0-9]+' | grep -v '^$')"
     fi
-    # NVIDIA: nvidia-smi --query-compute-apps=pid --format=csv,noheader
     if command -v nvidia-smi &>/dev/null; then
         pids+=" $(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ')"
     fi
-    echo "$pids" | xargs  # deduplicate whitespace
+    echo "$pids" | xargs
 }
 
-# ── Zombie detection and parent-kill ─────────────────────────────────────────
-
 _is_zombie() {
-    local pid="$1"
-    [[ "$(ps -p "$pid" -o stat= 2>/dev/null)" == Z* ]]
+    [[ "$(ps -p "$1" -o stat= 2>/dev/null)" == Z* ]]
 }
 
 _kill_zombie_parent() {
     # Kill the parent of a zombie so init adopts and reaps it, releasing
     # GPU memory held by the KFD driver.
-    local pid="$1"
-    local ppid
+    local pid="$1" ppid
     ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
     if [[ -n "$ppid" && "$ppid" != "1" && "$ppid" != "0" ]]; then
         echo "  PID $pid is zombie (parent=$ppid) — killing parent"
         kill -9 "$ppid" 2>/dev/null || sudo kill -9 "$ppid" 2>/dev/null || true
     elif [[ "$ppid" == "1" ]]; then
-        # Parent is init — zombie should be reaped shortly; just wait.
         echo "  PID $pid is zombie (parent=init) — waiting for reap"
     fi
 }
 
-# ── GPU status on exit (device-agnostic, full mode only) ─────────────────────
+# Force-kill all processes inside a container.
+#
+# Fallback when docker kill/stop fail because GPU processes are stuck in
+# D-state (uninterruptible I/O).  Killing non-D-state processes (Python,
+# Ray, shell) unblocks stuck NCCL collectives, letting D-state processes exit.
+#
+# Method 1: docker exec kill -9 -1  (runs as root via Docker daemon)
+# Method 2: host-level cgroup kill  (requires root or sudo)
+_force_kill_container_procs() {
+    local container="$1"
+    local cpid ccgroup _cgroup_procs
+
+    cpid=$("${DOCKER_CMD[@]}" inspect --format '{{.State.Pid}}' "$container" 2>/dev/null) || cpid=""
+    [[ -z "$cpid" || "$cpid" == "0" || ! -d "/proc/$cpid" ]] && return 1
+
+    # Method 1: docker exec (runs via Docker daemon — root, no sudo needed).
+    # Timeout guards against exec hanging on a stuck container runtime.
+    if timeout 5 "${DOCKER_CMD[@]}" exec "$container" kill -9 -1 2>/dev/null; then
+        echo "  [exec] Killed all processes in $container via docker exec"
+        return 0
+    fi
+    echo "  [exec] docker exec failed for $container; falling back to host-level kill"
+
+    # Method 2: cgroup kill (host-level, needs root/sudo).
+    ccgroup=$(grep -oP '0::\K.*' "/proc/$cpid/cgroup" 2>/dev/null || true)
+    _cgroup_procs="/sys/fs/cgroup${ccgroup}/cgroup.procs"
+
+    if [[ -n "$ccgroup" && -f "$_cgroup_procs" ]]; then
+        local _pcount=0 _kcount=0
+        echo "  [cgroup] Force-killing all processes in $container via $_cgroup_procs"
+        while IFS= read -r _p; do
+            _pcount=$((_pcount + 1))
+            if kill -9 "$_p" 2>/dev/null || sudo kill -9 "$_p" 2>/dev/null; then
+                _kcount=$((_kcount + 1))
+            fi
+        done < "$_cgroup_procs"
+        echo "  [cgroup] Sent SIGKILL to $_kcount/$_pcount processes"
+    else
+        echo "  [cgroup] Unavailable for $container (PID $cpid); killing process tree"
+        pkill -9 -P "$cpid" 2>/dev/null || sudo pkill -9 -P "$cpid" 2>/dev/null || true
+        kill -9 "$cpid" 2>/dev/null || sudo kill -9 "$cpid" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# ── GPU status on exit (full mode only) ──────────────────────────────────────
 
 if [[ -z "$TARGET_CONTAINER" ]]; then
     _show_gpu_status() {
@@ -90,15 +121,32 @@ if [[ -z "$TARGET_CONTAINER" ]]; then
 fi
 
 # =============================================================================
-# Targeted mode: kill a specific container (scancel / post-flight)
+# Targeted mode: kill a specific container (scancel trap)
 # =============================================================================
-# GPU processes ignore SIGTERM (deep in KFD/CUDA), so docker stop -t N wastes
-# N seconds waiting.  Go straight to SIGKILL via docker kill, then rm -f.
+# Go straight to SIGKILL (docker kill) — GPU processes ignore SIGTERM.
+# If docker kill fails, the container is likely a "ghost": containerd already
+# killed the processes (cgroup.procs is empty) but Docker never received the
+# exit event.  Force-kill via cgroup as a best-effort, then use docker stop
+# to nudge Docker's state machine into recognizing the container is dead.
 # GPU memory release is the next job's preflight responsibility.
-# Budget: kill (~1 s) + rm -f (~1 s) ≈ 2 s, well within Slurm's KillWait.
+#
+# Budget: kill (≤5s) + cgroup (~1s) + stop (≤8s) + rm (~1s)
+#       ≈ 15s, within Slurm's default 30s KillWait.
 
 if [[ -n "$TARGET_CONTAINER" ]]; then
-    "${DOCKER_CMD[@]}" kill "$TARGET_CONTAINER" 2>&1 || true
+    # Cap docker kill — its internal wait for exit events can burn 10+ seconds.
+    if timeout 5 "${DOCKER_CMD[@]}" kill "$TARGET_CONTAINER" 2>&1; then
+        "${DOCKER_CMD[@]}" rm -f "$TARGET_CONTAINER" 2>&1 || true
+        exit 0
+    fi
+
+    # docker kill failed ("did not receive an exit event").  Typically the
+    # processes are already dead (cgroup.procs empty) — Docker just lost
+    # the exit event from containerd.  Cgroup kill as best-effort, then
+    # docker stop to trigger Docker's state transition.
+    echo "[WARN] docker kill failed for $TARGET_CONTAINER; attempting force-kill"
+    _force_kill_container_procs "$TARGET_CONTAINER" || true
+    timeout 8 "${DOCKER_CMD[@]}" stop -t 2 "$TARGET_CONTAINER" 2>&1 || true
     "${DOCKER_CMD[@]}" rm -f "$TARGET_CONTAINER" 2>&1 || true
     exit 0
 fi
@@ -111,26 +159,41 @@ echo "=== Pre-flight GPU cleanup ==="
 
 START_TIME=$(date +%s)
 
-# ── Phase 0: Stop all running containers (with retries) ──────────────────────
-# Safe: nodes are --exclusive (sole access), so any running container is stale.
+# ── Phase 0: Stop all running containers ─────────────────────────────────────
+# Nodes are --exclusive, so any running container is stale from a prior job.
 # This catches training containers (GPU) AND coordination containers (Ray/CPU)
 # that the GPU-PID check alone would miss.
 #
-# We retry docker stop because a single attempt may not fully tear down the
-# container's PID namespace and KFD device references.  The SETTLE_WAIT after
-# each attempt gives the container runtime + KFD driver time to release GPU
-# memory — critical for zombie processes that hold ~255 GB/GPU.
+# Loop: docker stop → cgroup kill survivors → settle → check.
+# The cgroup kill BEFORE settling is critical: docker stop sends SIGKILL to
+# PID 1, but PID 1 can't exit while children are in D-state.  Cgroup-killing
+# those children lets PID 1 exit, and the settle wait gives the container
+# runtime + KFD driver time to release GPU memory.
 
 mapfile -t STALE < <("${DOCKER_CMD[@]}" ps -q 2>/dev/null)
 if [[ ${#STALE[@]} -gt 0 && -n "${STALE[0]}" ]]; then
     echo "[container] Stopping ${#STALE[@]} container(s): ${STALE[*]}"
-    retry=0
-    while true; do
+
+    for ((retry = 0; retry <= MAX_RETRIES; retry++)); do
+        # Graceful stop → SIGTERM, then SIGKILL after STOP_TIMEOUT.
         "${DOCKER_CMD[@]}" stop -t "$STOP_TIMEOUT" "${STALE[@]}" 2>/dev/null || true
 
-        # Give the container runtime time to fully tear down PID namespaces
-        # and release KFD/GPU memory.  Without this sleep, zombie processes
-        # from the previous job survive and hold GPU memory indefinitely.
+        # Quick check: if docker stop worked, skip the heavy path.
+        remaining=$("${DOCKER_CMD[@]}" ps -q 2>/dev/null)
+        if [[ -z "$remaining" ]]; then
+            echo "[container] All containers stopped"
+            break
+        fi
+
+        # Containers survived SIGKILL → GPU processes likely in D-state.
+        # Force-kill via cgroup to break the deadlock, THEN settle.
+        ((retry > 0)) && echo "[container] Retry $retry/$MAX_RETRIES — still running: $remaining"
+        for cid in $remaining; do
+            _force_kill_container_procs "$cid" || true
+        done
+
+        # Settle: give the container runtime + KFD driver time to tear down
+        # PID namespaces and release GPU memory after process death.
         sleep "$SETTLE_WAIT"
 
         remaining=$("${DOCKER_CMD[@]}" ps -q 2>/dev/null)
@@ -139,12 +202,11 @@ if [[ ${#STALE[@]} -gt 0 && -n "${STALE[0]}" ]]; then
             break
         fi
 
-        retry=$((retry + 1))
-        if [[ $retry -ge $MAX_RETRIES ]]; then
-            echo "[container] WARNING: containers still running after $MAX_RETRIES retries: $remaining"
+        if ((retry >= MAX_RETRIES)); then
+            echo "[container] WARNING: still running after $MAX_RETRIES retries: $remaining"
             break
         fi
-        echo "[container] Retry $retry/$MAX_RETRIES — still running: $remaining"
+
         mapfile -t STALE <<< "$remaining"
     done
 fi
@@ -160,7 +222,7 @@ fi
 echo "Found GPU processes after container stop: $GPU_PIDS"
 
 # ── Phase 2: Kill remaining GPU processes ────────────────────────────────────
-# Check each PID: zombies need parent-kill, live processes get SIGTERM→SIGKILL.
+# Zombies need parent-kill; live processes get SIGTERM → SIGKILL.
 
 for PID in $GPU_PIDS; do
     if _is_zombie "$PID"; then
@@ -172,7 +234,6 @@ done
 
 sleep "$KILL_WAIT"
 
-# Re-read: any survivors get SIGKILL (skip zombies — already handled above)
 GPU_PIDS=$(_get_gpu_pids)
 if [[ -n "$GPU_PIDS" ]]; then
     echo "SIGTERM didn't clear all processes, sending SIGKILL: $GPU_PIDS"
@@ -202,7 +263,6 @@ while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
     RETRY_COUNT=$((RETRY_COUNT + 1))
     echo "  Retry $RETRY_COUNT/$MAX_RETRIES - GPUs still occupied: $REMAINING"
 
-    # On each retry, re-check for zombies and kill their parents
     for PID in $REMAINING; do
         if _is_zombie "$PID"; then
             _kill_zombie_parent "$PID"
