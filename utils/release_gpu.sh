@@ -1,16 +1,44 @@
 #!/bin/bash
 
-# cleanup_gpu.sh - Stop stale containers and kill GPU processes with retries.
+# release_gpu.sh - Stop containers and kill GPU processes with retries.
+#
+# Two modes:
+#   Full (no args):       Stop ALL running containers, kill GPU processes,
+#                         wait for GPU memory release.  Used by preflight.
+#   Targeted (--container NAME):  Stop a specific container, skip
+#                         SETTLE_WAIT and GPU-PID phases.  Used by
+#                         scancel trap (post-flight).
 #
 # Device-agnostic: detects AMD (rocm-smi) or NVIDIA (nvidia-smi) GPUs.
-# Stops ALL running containers first (safe: nodes are --exclusive), then
-# kills any remaining host-native GPU processes.
 #
 # Zombie handling:  Zombie processes (Z state) can't be killed — they're
 # already dead but hold GPU memory until the kernel reaps them.  We handle
 # this by (1) killing the zombie's parent so init adopts and reaps it,
 # and (2) giving the container runtime enough time after docker stop to
 # fully tear down PID namespaces and release KFD/GPU memory.
+
+# ── Argument parsing ─────────────────────────────────────────────────────────
+
+TARGET_CONTAINER=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --container) TARGET_CONTAINER="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+# ── Docker binary ────────────────────────────────────────────────────────────
+source "$(dirname "${BASH_SOURCE[0]}")/docker_utils.sh"
+DOCKER_BIN="$(get_docker_bin)" || { echo "ERROR: no docker/podman found" >&2; exit 1; }
+read -ra DOCKER_CMD <<< "$DOCKER_BIN"
+
+# ── Configuration ────────────────────────────────────────────────────────────
+
+STOP_TIMEOUT="${STOP_TIMEOUT:-20}"  # seconds to wait for graceful container stop
+SETTLE_WAIT="${SETTLE_WAIT:-40}"    # seconds after container stop for runtime/KFD cleanup
+KILL_WAIT=5                        # seconds between SIGTERM and SIGKILL
+POLL_INTERVAL=20                   # seconds between GPU-free checks
+MAX_RETRIES="${MAX_RETRIES:-10}"
 
 # ── GPU process detection (device-agnostic) ──────────────────────────────────
 
@@ -49,70 +77,82 @@ _kill_zombie_parent() {
     fi
 }
 
-# ── GPU status on exit (device-agnostic) ─────────────────────────────────────
+# ── GPU status on exit (device-agnostic, full mode only) ─────────────────────
 
-_show_gpu_status() {
-    echo "--- GPU status after cleanup ---"
-    command -v rocm-smi  &>/dev/null && { rocm-smi --showpids 2>&1 || true; }
-    command -v amd-smi   &>/dev/null && { amd-smi 2>&1 || true; }
-    command -v nvidia-smi &>/dev/null && { nvidia-smi 2>&1 || true; }
-}
-trap _show_gpu_status EXIT
-
-echo "=== Pre-flight GPU cleanup ==="
-
-# $DOCKER_BIN may be "sudo docker" (two words). Split into an array so we can
-# invoke it safely as "${DOCKER_CMD[@]}" without relying on word splitting.
-if [[ -n "$DOCKER_BIN" ]]; then
-    read -ra DOCKER_CMD <<< "$DOCKER_BIN"
-else
-    DOCKER_CMD=()
+if [[ -z "$TARGET_CONTAINER" ]]; then
+    _show_gpu_status() {
+        echo "--- GPU status after cleanup ---"
+        command -v rocm-smi  &>/dev/null && { rocm-smi --showpids 2>&1 || true; }
+        command -v amd-smi   &>/dev/null && { amd-smi 2>&1 || true; }
+        command -v nvidia-smi &>/dev/null && { nvidia-smi 2>&1 || true; }
+    }
+    trap _show_gpu_status EXIT
 fi
 
-# ── Configuration ────────────────────────────────────────────────────────────
+# =============================================================================
+# Targeted mode: stop a specific container (scancel / post-flight)
+# =============================================================================
+# Uses the same proven STOP_TIMEOUT as full mode.  SETTLE_WAIT is skipped —
+# GPU memory release is the next job's preflight responsibility.
+# Budget: stop -t 20 (up to 20 s) + fallback kill (~2 s) ≈ 22 s worst case,
+# fits within Slurm's KillWait (default 30 s).
 
-STOP_TIMEOUT=20   # seconds to wait for graceful container stop
-SETTLE_WAIT=40    # seconds after container stop for runtime/KFD cleanup
-KILL_WAIT=5       # seconds between SIGTERM and SIGKILL
-POLL_INTERVAL=20  # seconds between GPU-free checks
-MAX_RETRIES=10
+if [[ -n "$TARGET_CONTAINER" ]]; then
+    "${DOCKER_CMD[@]}" stop -t "$STOP_TIMEOUT" "$TARGET_CONTAINER" 2>&1 || true
+    # Check if the container is still running.
+    if ! "${DOCKER_CMD[@]}" ps -q -f "name=^${TARGET_CONTAINER}$" 2>/dev/null | grep -q .; then
+        exit 0
+    fi
+    # Last resort: bare kill + rm -f.
+    "${DOCKER_CMD[@]}" kill "$TARGET_CONTAINER" 2>&1 || true
+    "${DOCKER_CMD[@]}" rm -f "$TARGET_CONTAINER" 2>&1 || true
+    exit 0
+fi
+
+# =============================================================================
+# Full mode: stop all containers + clean GPU processes (preflight)
+# =============================================================================
+
+echo "=== Pre-flight GPU cleanup ==="
 
 START_TIME=$(date +%s)
 
 # ── Phase 0: Stop all running containers (with retries) ──────────────────────
 # Safe: nodes are --exclusive (sole access), so any running container is stale.
 # This catches training containers (GPU) AND coordination containers (Ray/CPU)
-# that cleanup_gpu's GPU-PID check alone would miss.
+# that the GPU-PID check alone would miss.
 #
 # We retry docker stop because a single attempt may not fully tear down the
 # container's PID namespace and KFD device references.  The SETTLE_WAIT after
 # each attempt gives the container runtime + KFD driver time to release GPU
 # memory — critical for zombie processes that hold ~255 GB/GPU.
 
-if [[ ${#DOCKER_CMD[@]} -gt 0 ]]; then
-    mapfile -t STALE < <("${DOCKER_CMD[@]}" ps -q 2>/dev/null)
-    if [[ ${#STALE[@]} -gt 0 ]]; then
-        echo "Stopping all running container(s): ${STALE[*]}"
-        RETRY_COUNT=0
-        while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
-            "${DOCKER_CMD[@]}" stop -t "$STOP_TIMEOUT" "${STALE[@]}" 2>/dev/null || true
+mapfile -t STALE < <("${DOCKER_CMD[@]}" ps -q 2>/dev/null)
+if [[ ${#STALE[@]} -gt 0 && -n "${STALE[0]}" ]]; then
+    echo "[container] Stopping ${#STALE[@]} container(s): ${STALE[*]}"
+    retry=0
+    while true; do
+        "${DOCKER_CMD[@]}" stop -t "$STOP_TIMEOUT" "${STALE[@]}" 2>/dev/null || true
 
-            # Give the container runtime time to fully tear down PID namespaces
-            # and release KFD/GPU memory.  Without this sleep, zombie processes
-            # from the previous job survive and hold GPU memory indefinitely.
-            sleep "$SETTLE_WAIT"
+        # Give the container runtime time to fully tear down PID namespaces
+        # and release KFD/GPU memory.  Without this sleep, zombie processes
+        # from the previous job survive and hold GPU memory indefinitely.
+        sleep "$SETTLE_WAIT"
 
-            REMAINING_CONTAINERS=$("${DOCKER_CMD[@]}" ps -q 2>/dev/null)
-            if [[ -z "$REMAINING_CONTAINERS" ]]; then
-                echo "All containers stopped successfully"
-                break
-            fi
+        remaining=$("${DOCKER_CMD[@]}" ps -q 2>/dev/null)
+        if [[ -z "$remaining" ]]; then
+            echo "[container] All containers stopped"
+            break
+        fi
 
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "  Docker stop retry $RETRY_COUNT/$MAX_RETRIES — still running: $REMAINING_CONTAINERS"
-            mapfile -t STALE <<< "$REMAINING_CONTAINERS"
-        done
-    fi
+        retry=$((retry + 1))
+        if [[ $retry -ge $MAX_RETRIES ]]; then
+            echo "[container] WARNING: containers still running after $MAX_RETRIES retries: $remaining"
+            break
+        fi
+        echo "[container] Retry $retry/$MAX_RETRIES — still running: $remaining"
+        mapfile -t STALE <<< "$remaining"
+    done
 fi
 
 # ── Phase 1: Detect remaining GPU processes ──────────────────────────────────
