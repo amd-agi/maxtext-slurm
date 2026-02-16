@@ -773,8 +773,11 @@ try:
     # drip, the oldest pending steps may fall off the 1 MB read
     # window and be skipped (best-effort).
     #
-    # First poll (or old state without drip): emit the latest step
-    # so we don't slowly replay hundreds of historical steps.
+    # First poll (or old state without drip): estimate drip capacity
+    # from step_time and poll_interval.  If the backlog can be
+    # drained before the next TB flush, start from the earliest
+    # step (preserving initial metrics).  Otherwise, skip enough
+    # early steps to avoid falling permanently behind.
     #
     # When caught up (no new steps after parse — file grew with
     # only non-scalar events): skip metric output, let exporter
@@ -904,9 +907,38 @@ try:
                                     time.time(),
                                     prom_ts_ms=_last_prom_ts_ms))
     else:
-        # First run (or upgraded from old state) — jump to the latest.
-        emit_step = sorted_steps[-1]
-        emit_size = current_size
+        # First run (or upgraded from old state).
+        # Estimate how many steps we can drip before the next TB flush
+        # to decide whether to start from the beginning or jump ahead.
+        #
+        # step_time:      avg seconds per training step (from wall_times)
+        # flush_budget:   estimated seconds until the next TB flush
+        #                 ≈ batch_size × step_time (the current batch
+        #                   accumulated over one flush period)
+        # poll_interval:  seconds between plugin invocations (from exporter)
+        # drip_capacity:  steps we can emit before the next batch arrives
+        #
+        # If drip_capacity >= batch_size, start from the earliest step
+        # (we'll catch up in time).  Otherwise, skip the oldest steps
+        # that would cause us to fall permanently behind.
+        emit_step = sorted_steps[-1]  # default: jump to latest
+        if len(sorted_steps) >= 2:
+            wt_vals = [wt for s in sorted_steps
+                       for wt, _ in by_step[s].values()]
+            step_range = sorted_steps[-1] - sorted_steps[0]
+            if step_range > 0 and wt_vals:
+                step_time = (max(wt_vals) - min(wt_vals)) / step_range
+                flush_budget = len(sorted_steps) * step_time
+                poll_interval = float(
+                    os.environ.get('POLL_INTERVAL', 10))
+                if poll_interval > 0 and flush_budget > 0:
+                    drip_capacity = int(flush_budget / poll_interval)
+                    skip = max(0, len(sorted_steps)
+                               - max(1, drip_capacity))
+                    emit_step = sorted_steps[skip]
+        # Cache file size only when no more steps remain to drip.
+        emit_size = (current_size
+                     if emit_step == sorted_steps[-1] else None)
         ats = emit_prometheus(by_step[emit_step], emit_step)
         _last_prom_ts_ms = max(_last_prom_ts_ms, ats)
         print(_locked_state(event_file, emit_step, emit_size,
