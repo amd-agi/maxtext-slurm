@@ -50,6 +50,7 @@
 
 EXPORTER_PORT="${EXPORTER_PORT:-9400}"
 POLL_INTERVAL="${POLL_INTERVAL:-10}"
+export POLL_INTERVAL  # plugins use this to estimate drip capacity
 METRICS_FILE="/tmp/node_hw_metrics.prom"
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || hostname)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
