@@ -71,6 +71,20 @@ else
         echo "$HOST | [CHECK_IPV6_RULES] OK ($_ipv6_fd_rules)"
     fi
 
+    # ---- Ionic RDMA firmware health check ----
+    # Detects NIC firmware errors from prior crashed RCCL jobs or hardware faults.
+    # Known patterns:
+    #   "opcode 9 error 2"  → QP modify rejected → ibv_query_gid fails → RCCL deadlock
+    #   "wait status -512"  → firmware timeout → NIC unresponsive
+    _ionic_errors=$(dmesg -T 2>/dev/null | grep -c 'ionic.*\(opcode.*error\|wait status\)') || _ionic_errors=0
+    if [[ "$_ionic_errors" -gt 0 ]]; then
+        echo "FATAL: $HOST | [CHECK_IONIC_RDMA] $_ionic_errors ionic firmware error(s) in dmesg — NIC needs reset"
+        dmesg -T 2>/dev/null | grep 'ionic.*\(opcode.*error\|wait status\)' | tail -5 | sed "s/^/  $HOST | /"
+        exit 1
+    else
+        echo "$HOST | [CHECK_IONIC_RDMA] OK (no firmware errors)"
+    fi
+
     # ---- DCQCN congestion control check ----
     # DCQCN must be enabled on all NICs for congestion mitigation.
     EXPECTED_DCQCN_COUNT=${EXPECTED_DCQCN_COUNT:-8}
