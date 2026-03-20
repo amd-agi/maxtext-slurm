@@ -1,11 +1,11 @@
 ---
 name: notifications
-description: Send Telegram notifications to the user. Use when the user asks to be notified, messaged, or alerted about task completion, job status, or any result. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can use it when the user explicitly requests notification.
+description: Send and receive Telegram messages. Use when the user asks to be notified, messaged, or alerted about task completion, job status, or any result — and when they want to reply with follow-up instructions via Telegram. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can use it when the user explicitly requests notification.
 ---
 
 # Notifications
 
-Send Telegram messages to the user via `utils/telegram_bot.sh`. Use when the user says things like "send me a TG message", "notify me when done", or "alert me on Telegram".
+Send and receive Telegram messages via `utils/telegram_bot.sh`. Use when the user says things like "send me a TG message", "notify me when done", "alert me on Telegram", or "wait for my TG reply".
 
 ## Sending flow
 
@@ -121,6 +121,60 @@ Or via host-cmd:
 ```bash
 python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 15 \
   "PARSE_MODE='' cat /tmp/tg_msg.txt | bash utils/telegram_bot.sh send"
+```
+
+## Interactive loop
+
+**Every time you send a TG notification, enter an interactive wait loop.** This lets the user reply on Telegram with follow-up instructions without returning to the Cursor GUI. All rules in this section (recv, clarification, multi-message handling, timeout) apply only while the loop is active — do NOT call recv or wait for TG replies outside this loop.
+
+### Protocol
+
+1. **Append a hint** to the TG message you send:
+
+> Reply here with further instructions. I'll wait for 10 minutes.
+
+2. **Run `recv`** to wait for the user's reply. Background it immediately so you can poll:
+
+From the container:
+
+```bash
+utils/telegram_bot.sh recv --timeout 600
+```
+
+Via host-cmd (set host-cmd timeout slightly above recv timeout):
+
+```bash
+python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 660 \
+  "bash utils/telegram_bot.sh recv --timeout 600"
+```
+
+Run with `block_until_ms: 0` to background it, then poll the terminal file every ~30 seconds.
+
+3. **On reply**: read the user's instructions from the command output. If multiple messages arrived at once (newline-separated in the output), read them all and synthesize the overall intent — do NOT execute them one by one. Later messages often refine or supersede earlier ones. If the instructions are ambiguous, send a TG message asking for clarification and run recv again instead of guessing. Otherwise, execute the synthesized instructions, then send a new TG notification with the result. **Loop back to step 1** (append the hint again, run recv again).
+
+4. **On timeout** (recv exits with code 1, output contains "Timeout"): end the loop. Report in the Cursor chat:
+
+> TG interactive loop ended — no reply within timeout.
+
+5. **Early exit**: if the user's reply is just an acknowledgment ("done", "ok", "thanks", "stop"), end the loop without executing further work. Send a brief TG confirmation ("Got it, stopping.") and report in the Cursor chat.
+
+6. **Ad-hoc timeout changes**: if the user asks to change the wait time (e.g. "increase timeout to 20 min"), adjust the `--timeout` flag on subsequent `recv` calls in the current session. Do NOT modify the script's default timeout or any docs/config — just pass `--timeout 1200` (or whatever the user requests) for the remainder of the loop.
+
+7. **One loop at a time**: Telegram's `getUpdates` API is per-bot — any `recv` that confirms a message purges it from the queue for ALL consumers. Do NOT run interactive loops in multiple concurrent sessions with the same bot token. Only one session should use `recv` at a time; other sessions can still `send`.
+
+### Example agent flow
+
+```
+Agent: runs task, gets result
+Agent: telegram_bot.sh send "Task complete. Result: X. Reply here with further instructions..."
+Agent: telegram_bot.sh recv --timeout 600  (backgrounded, polls terminal file)
+User (on TG): "now run it again with Y=5"
+Agent: reads reply from terminal output
+Agent: executes the instruction
+Agent: telegram_bot.sh send "Done. Y=5 result: Z. Reply here with further instructions..."
+Agent: telegram_bot.sh recv --timeout 600  (backgrounded again)
+... (no reply within 10 min) ...
+Agent: "TG interactive loop ended — no reply within timeout."
 ```
 
 ## Integration with other skills

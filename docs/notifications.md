@@ -4,7 +4,7 @@ A programmable notification system built on [Telegram](https://telegram.org/). T
 
 | Script | Purpose |
 |--------|---------|
-| `utils/telegram_bot.sh` | General-purpose CLI for sending Telegram messages — use it in scripts, pipelines, or interactively |
+| `utils/telegram_bot.sh` | General-purpose CLI for sending and receiving Telegram messages — use it in scripts, pipelines, or interactively |
 | `utils/slurm_job_monitor.sh` | Automated [Slurm](https://slurm.schedmd.com/) job monitoring with push notifications (built on `telegram_bot.sh`) |
 
 Both scripts auto-source credentials from `~/.tg_env` — set up once, use everywhere.
@@ -26,7 +26,7 @@ Tutorial: [Telegram Bot API — Getting Started](https://core.telegram.org/bots/
 
 ## telegram_bot.sh
 
-A subcommand-based CLI for interacting with the Telegram Bot API. Currently supports `send`, designed to be extended with future commands (e.g., `receive`).
+A subcommand-based CLI for interacting with the Telegram Bot API. Supports `send` (send messages) and `recv` (wait for incoming messages via long polling).
 
 ### Sending messages
 
@@ -45,6 +45,27 @@ PARSE_MODE="" utils/telegram_bot.sh send "file_names_with_underscores & special 
 
 # Explicit credentials (override ~/.tg_env)
 TG_BOT_TOKEN=tok TG_CHAT_ID=123 utils/telegram_bot.sh send "Hello"
+```
+
+### Receiving messages
+
+Wait for an incoming message using Telegram's long polling. Only messages from the configured `TG_CHAT_ID` are returned. On startup, any pending messages from your chat are returned immediately; if none are pending, long-polling begins for new messages.
+
+```bash
+# Wait up to 10 minutes (default) for a message
+utils/telegram_bot.sh recv
+
+# Custom timeout (5 minutes)
+utils/telegram_bot.sh recv --timeout 300
+```
+
+The received message text is printed to stdout (exit 0). If no message arrives within the timeout, exits 1. Under the hood, it long-polls the Telegram API in 60-second rounds — one held-open HTTP connection at a time, no busy polling.
+
+```bash
+# Send a question, wait for the reply
+utils/telegram_bot.sh send "Should I proceed? (yes/no)"
+reply=$(utils/telegram_bot.sh recv --timeout 300)
+echo "User replied: $reply"
 ```
 
 ### Usage patterns
