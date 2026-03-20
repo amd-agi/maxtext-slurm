@@ -35,13 +35,14 @@
 
 This starts a read-only [Prometheus](https://prometheus.io/) instance (no scraping) serving the persisted TSDB data. Open `http://localhost:9190` (or your chosen `-p` port) to query and graph all metrics (GPU, host, network, training scalars, and [Ray](https://www.ray.io/)) that were collected during the run. During live jobs, the Prometheus port defaults to 9190 but auto-increments (9191, 9192, ...) if the port is already occupied — check the job log for the actual port.
 
-## Send a Telegram message
+## Telegram messaging
 
-Standalone utility for sending messages to [Telegram](https://telegram.org/) via the Bot API. Handles URL-encoding for rich content (Markdown, code blocks, special characters). Credentials are auto-sourced from `~/.tg_env` after [one-time setup](notifications.md#one-time-setup).
+Standalone utility for sending and receiving [Telegram](https://telegram.org/) messages via the Bot API. Handles URL-encoding for rich content (Markdown, code blocks, special characters). Credentials are auto-sourced from `~/.tg_env` after [one-time setup](notifications.md#one-time-setup).
 
 ```bash
 utils/telegram_bot.sh send "Hello *world*"
 echo "Deploy complete" | utils/telegram_bot.sh send
+utils/telegram_bot.sh recv --timeout 300
 ```
 
 See [Notifications](notifications.md) for full usage, programmable patterns, and options.

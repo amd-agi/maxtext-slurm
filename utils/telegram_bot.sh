@@ -7,7 +7,8 @@
 #   ./telegram_bot.sh <command> [args...]
 #
 # Commands:
-#   send <message>    Send a message to a Telegram chat
+#   send <message>        Send a message to a Telegram chat
+#   recv [--timeout SECS] Wait for a message (long polling, default: 600s)
 #
 # Credentials (in order of precedence):
 #    1. Environment variables: TG_BOT_TOKEN, TG_CHAT_ID
@@ -16,6 +17,7 @@
 # Examples:
 #    # Credentials in ~/.tg_env — just use it:
 #    ./telegram_bot.sh send "Hello world"
+#    ./telegram_bot.sh recv --timeout 300
 #
 #    # Or pass explicitly:
 #    TG_BOT_TOKEN=tok TG_CHAT_ID=123 ./telegram_bot.sh send "Hello world"
@@ -248,6 +250,172 @@ EOF
 }
 
 # ============================================================================
+# COMMAND: recv
+# ============================================================================
+
+# Parse a getUpdates API response, extracting ALL messages matching our chat.
+# Reads JSON from stdin.
+# Args: chat_id
+# On match: prints "max_update_id\n<all message texts joined by newlines>"
+#           to stdout, exits 0.
+# API error: prints diagnostic to stderr, exits 2.
+# No match: exits 1.
+_parse_recv_response() {
+    local chat_id="$1"
+    python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+if not data.get('ok'):
+    print('API error: ' + json.dumps(data), file=sys.stderr)
+    sys.exit(2)
+chat_id = int(sys.argv[1])
+max_id = None
+texts = []
+for r in data.get('result', []):
+    msg = r.get('message') or r.get('edited_message') or {}
+    if msg.get('chat', {}).get('id') == chat_id:
+        text = msg.get('text', '')
+        if text:
+            max_id = r['update_id']
+            texts.append(text)
+if texts:
+    print(max_id)
+    print('\n'.join(texts))
+    sys.exit(0)
+sys.exit(1)
+" "$chat_id"
+}
+
+# Wait for a message from Telegram using long polling.
+#
+# Usage: cmd_recv [--timeout SECONDS]
+#
+# Prints the received message text to stdout and exits 0.
+# Exits 1 if no message is received within the timeout.
+#
+# Default timeout: 600 seconds (10 minutes).
+# Uses Telegram's long polling (60s per round) to minimize HTTP requests.
+cmd_recv() {
+    local total_timeout=600
+    local poll_interval=60
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --timeout)
+                total_timeout="$2"
+                shift 2
+                ;;
+            --timeout=*)
+                total_timeout="${1#--timeout=}"
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: $SCRIPT_NAME recv [--timeout SECONDS]" >&2
+                echo "Wait for a message from Telegram (default timeout: 600s)." >&2
+                exit 0
+                ;;
+            *)
+                echo "Error: Unknown option: $1" >&2
+                echo "Usage: $SCRIPT_NAME recv [--timeout SECONDS]" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    validate_env
+
+    local api_url="https://api.telegram.org/bot${TG_BOT_TOKEN}/getUpdates"
+
+    # Phase 1: Check for pending messages (non-blocking).
+    # This catches messages sent while the agent was busy working.
+    local pending_response
+    pending_response=$(curl -sS --max-time 10 "${api_url}?timeout=0" 2>&1)
+
+    local pending_parsed="" pending_exit=0
+    pending_parsed=$(echo "$pending_response" | _parse_recv_response "$TG_CHAT_ID") || pending_exit=$?
+
+    if [[ $pending_exit -eq 0 ]]; then
+        local update_id msg_text
+        update_id=$(head -1 <<< "$pending_parsed")
+        msg_text=$(tail -n +2 <<< "$pending_parsed")
+
+        curl -sS --max-time 10 \
+            "${api_url}?offset=$((update_id + 1))&timeout=0" > /dev/null 2>&1 || true
+
+        echo "$msg_text"
+        exit 0
+    fi
+
+    # Phase 2: No pending messages from our chat. Set offset past all pending
+    # updates so we only long-poll for genuinely new messages.
+    local next_offset=0
+    local latest_id
+    latest_id=$(echo "$pending_response" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+results = data.get('result', [])
+if results:
+    print(max(r['update_id'] for r in results))
+else:
+    print('')
+" 2>/dev/null) || true
+
+    if [[ -n "$latest_id" ]]; then
+        next_offset=$((latest_id + 1))
+    fi
+
+    local start_time
+    start_time=$(date +%s)
+
+    echo "Waiting for message (timeout: ${total_timeout}s)..." >&2
+
+    while true; do
+        local now elapsed remaining
+        now=$(date +%s)
+        elapsed=$((now - start_time))
+
+        if [[ $elapsed -ge $total_timeout ]]; then
+            echo "Timeout: no message received within ${total_timeout}s" >&2
+            exit 1
+        fi
+
+        remaining=$((total_timeout - elapsed))
+        local this_poll=$poll_interval
+        if [[ $remaining -lt $poll_interval ]]; then
+            this_poll=$remaining
+        fi
+        local curl_timeout=$((this_poll + 10))
+
+        local response
+        response=$(curl -sS --max-time "$curl_timeout" \
+            "${api_url}?offset=${next_offset}&timeout=${this_poll}" 2>&1) || {
+            echo "Warning: curl failed, retrying..." >&2
+            sleep 2
+            continue
+        }
+
+        local parsed="" parse_exit=0
+        parsed=$(echo "$response" | _parse_recv_response "$TG_CHAT_ID") || parse_exit=$?
+
+        if [[ $parse_exit -eq 0 ]]; then
+            local update_id msg_text
+            update_id=$(head -1 <<< "$parsed")
+            msg_text=$(tail -n +2 <<< "$parsed")
+
+            # Confirm the processed update
+            curl -sS --max-time 10 \
+                "${api_url}?offset=$((update_id + 1))&timeout=0" > /dev/null 2>&1 || true
+
+            echo "$msg_text"
+            exit 0
+        elif [[ $parse_exit -eq 2 ]]; then
+            echo "Warning: API error, retrying..." >&2
+            sleep 2
+        fi
+    done
+}
+
+# ============================================================================
 # MAIN DISPATCH
 # ============================================================================
 
@@ -256,7 +424,8 @@ usage() {
 Usage: $SCRIPT_NAME <command> [args...]
 
 Commands:
-    send <message>   Send a message to a Telegram chat
+    send <message>          Send a message to a Telegram chat
+    recv [--timeout SECS]   Wait for a message (default: 600s)
 
 Credentials (in order of precedence):
     1. TG_BOT_TOKEN / TG_CHAT_ID environment variables
@@ -264,6 +433,7 @@ Credentials (in order of precedence):
 
 Examples:
     $SCRIPT_NAME send "Hello world"
+    $SCRIPT_NAME recv --timeout 300
     TG_BOT_TOKEN=tok TG_CHAT_ID=123 $SCRIPT_NAME send "Hello world"
     echo "message" | $SCRIPT_NAME send
 
@@ -281,6 +451,7 @@ shift
 
 case "$COMMAND" in
     send)  cmd_send "$@" ;;
+    recv)  cmd_recv "$@" ;;
     -h|--help|help) usage ;;
     *)
         echo "Error: Unknown command: $COMMAND" >&2
