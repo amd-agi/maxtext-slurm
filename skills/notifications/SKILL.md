@@ -137,9 +137,16 @@ python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 15 \
 
 ### Protocol
 
-1. **Append a hint** to the TG message you send:
+1. **Append a hint** to the end of the TG message you send (Markdown formatting):
 
-> Reply here with further instructions. I'll wait for 10 minutes.
+```
+━━━━━━━━━━━━━━━━━━━━
+💬 *Reply here with instructions*
+⏳ _I'll wait for 10 minutes_
+━━━━━━━━━━━━━━━━━━━━
+```
+
+Adjust the timeout value to match the actual `--timeout` passed to `recv`. Do NOT append this hint to progress report messages (step 8) — those are one-way sends.
 
 2. **Run `recv`** to wait for the user's reply. Background it immediately so you can poll:
 
