@@ -106,30 +106,30 @@ If the user says yes, walk them through `docs/notifications.md` setup:
 
 ## Message formatting
 
-Keep messages concise. Telegram has a 4096-char limit per message (the script auto-splits longer messages). Use plain text structure:
+Keep messages concise. Telegram has a 4096-char limit per message (the script auto-splits longer messages). Use Markdown formatting — the script sends with `PARSE_MODE=Markdown` by default.
+
+**Wrap technical identifiers in backtick code spans** — file paths, config names, variable names, model names. Telegram does not parse Markdown inside backticks, so underscores and brackets are safe:
 
 ```
-<Task> complete
+*Sweep complete*
 
-Key result 1
-Key result 2
-...
-
-Summary line
+`config_llama_70b_batch_8`: 1250 TGS
+`config_llama_70b_batch_16`: 892 TGS
+_Best result_: `per_device_batch_size`=4
 ```
 
-Avoid Markdown special characters (`_`, `*`, `[`, `` ` ``) in dynamic content (model names, file paths) — they can break Telegram's Markdown parser. If the message contains such characters, set `PARSE_MODE=""` for plain text:
+This is the key rule for avoiding Markdown conflicts. `*bold*`, `_italic_`, and `` `code` `` all work naturally as long as dynamic content with underscores goes in backticks.
 
-```bash
-PARSE_MODE="" utils/telegram_bot.sh send "file_names_with_underscores"
+If Markdown still fails (e.g., unmatched `_` the agent missed), the script automatically retries as plain text — the message always gets delivered.
+
+For multi-line code or shell output, use triple-backtick code blocks:
+
+~~~
 ```
-
-Or via host-cmd:
-
-```bash
-python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 15 \
-  "PARSE_MODE='' cat /tmp/tg_msg.txt | bash utils/telegram_bot.sh send"
+step 100: loss=2.31, TGS=1250.3
+step 200: loss=2.15, TGS=1248.7
 ```
+~~~
 
 ## Interactive loop
 
@@ -137,16 +137,14 @@ python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 15 \
 
 ### Protocol
 
-1. **Append a hint footer** to the end of every TG message that enters the wait loop. The footer uses Telegram Markdown formatting and must include the separator lines, emojis, bold, and italic exactly as shown. Adjust the timeout to match the actual `--timeout` passed to `recv`. Example full message:
+1. **Send the result**, then **send a separate hint message**. The result uses Markdown (wrap technical identifiers in backticks — see Message formatting above). The hint is its own message:
 
-   > Task complete. Result: X.
-   >
    > ━━━━━━━━━━━━━━━━━━━━
-   > 💬 \*Reply here with instructions\*
-   > ⏳ \_I'll wait for {duration}\_
+   > 💬 \*Awaiting further instructions\*
+   > ⏳ \_Timeout: {duration}\_
    > ━━━━━━━━━━━━━━━━━━━━
 
-Replace `{duration}` with the actual timeout in the most natural unit (e.g., "10 minutes", "1 hour", "2 hours"). The `*...*` renders as **bold** and `_..._` renders as _italic_ in Telegram. The ━ line, 💬, and ⏳ are literal characters. Do NOT append this footer to progress report messages (step 8) or echo messages (step 3) — only to result notifications that enter the recv loop.
+Replace `{duration}` with the actual timeout in the most natural unit (e.g., "10 minutes", "1 hour", "2 hours"). The `*...*` renders as **bold** and `_..._` renders as _italic_ in Telegram. The ━ line, 💬, and ⏳ are literal characters. Send this hint after every result notification that enters the recv loop — NOT after echo messages (step 3) or progress reports (step 8).
 
 2. **Run `recv`** to wait for the user's reply. Background it immediately so you can poll:
 
@@ -176,13 +174,29 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
    In all cases, the echo message should reflect your interpretation of every received message so the user sees exactly what you plan to do.
 
-   After executing, send a new TG notification with the result. **Loop back to step 1** (append the hint again, run recv again).
+   After executing, send a new TG notification with the result. **Loop back to step 1** (send hint, run recv again).
 
-4. **On timeout** (recv exits with code 1, output contains "Timeout"): end the loop. Report in the Cursor chat:
+4. **On timeout** (recv exits with code 1, output contains "Timeout"): send a final TG notification so the user knows the agent stopped listening, then end the loop. Report in the agent chat as well:
 
-> TG interactive loop ended — no reply within timeout.
+   TG message:
 
-5. **Early exit**: if the user's reply is just an acknowledgment ("done", "ok", "thanks", "stop"), end the loop without executing further work. Send a brief TG confirmation ("Got it, stopping.") and report in the Cursor chat.
+   > ━━━━━━━━━━━━━━━━━━━━
+   > ⏱ \*Timed out — no longer listening\*
+   > ⚠️ \_Back to the agent chat to continue\_
+   > ━━━━━━━━━━━━━━━━━━━━
+
+   Agent chat: "TG interactive loop ended — no reply within timeout."
+
+5. **Early exit**: if the user's reply is just an acknowledgment ("done", "ok", "thanks", "stop"), end the loop without executing further work. Send a TG confirmation and report in the agent chat:
+
+   TG message:
+
+   > ━━━━━━━━━━━━━━━━━━━━
+   > ✅ \*Acknowledged — no longer listening\*
+   > ⚠️ \_Back to the agent chat to continue\_
+   > ━━━━━━━━━━━━━━━━━━━━
+
+   Agent chat: "TG interactive loop ended — user acknowledged."
 
 6. **Ad-hoc timeout changes**: if the user asks to change the wait time (e.g. "increase timeout to 20 min"), adjust the `--timeout` flag on subsequent `recv` calls in the current session. Do NOT modify the script's default timeout or any docs/config — just pass `--timeout 1200` (or whatever the user requests) for the remainder of the loop.
 
@@ -199,13 +213,15 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
 ```
 Agent: runs task, gets result
-Agent: telegram_bot.sh send "Task complete. Result: X.\n\n━━━━━━━━━━━━━━━━━━━━\n💬 *Reply here with instructions*\n⏳ _I'll wait for 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (10 = 600s ÷ 60)
+Agent: telegram_bot.sh send "*Task complete.* Result: `X`."                (Markdown)
+Agent: telegram_bot.sh send "━━━━━━━━━━━━━━━━━━━━\n💬 *Awaiting further instructions*\n⏳ _Timeout: 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (hint)
 Agent: telegram_bot.sh recv --timeout 600  (backgrounded, polls terminal file)
 User (on TG): "now run it again with Y=5"
 Agent: reads reply from terminal output
-Agent: telegram_bot.sh send "Got it: re-run with Y=5. Working on it..."  (echo — no footer)
+Agent: telegram_bot.sh send "Got it: re-run with `Y`=5. Working on it..."  (echo — no hint)
 Agent: executes the instruction
-Agent: telegram_bot.sh send "Done. Y=5 result: Z.\n\n━━━━━━━━━━━━━━━━━━━━\n💬 *Reply here with instructions*\n⏳ _I'll wait for 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (same timeout)
+Agent: telegram_bot.sh send "*Done.* `Y`=5 result: `Z`."                  (Markdown)
+Agent: telegram_bot.sh send "━━━━━━━━━━━━━━━━━━━━\n💬 *Awaiting further instructions*\n⏳ _Timeout: 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (hint)
 Agent: telegram_bot.sh recv --timeout 600  (backgrounded again)
 ... (no reply within 10 min) ...
 Agent: "TG interactive loop ended — no reply within timeout."
