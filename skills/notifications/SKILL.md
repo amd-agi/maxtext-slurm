@@ -11,7 +11,7 @@ Send and receive Telegram messages via `utils/telegram_bot.sh`. Use when the use
 
 **NEVER read, print, or log the contents of `~/.tg_config`.** Only check if the file exists. The script loads credentials internally.
 
-If the user specifies a bot profile (e.g., "use the alerts channel"), pass `-b <name>` on every `send`/`recv` call. Otherwise, omit `-b` to use the `default` profile.
+If the user specifies a bot profile (e.g., "use the alerts channel"), pass `-b <name>` on every `send`/`recv` call for the rest of the session. The choice is sticky — do not revert to default until the user explicitly asks to switch.
 
 Try in order. Stop at the first success.
 
