@@ -1,9 +1,9 @@
 ---
-name: notifications
-description: Send and receive Telegram messages. Use when the user asks to be notified, messaged, or alerted about task completion, job status, or any result — and when they want to reply with follow-up instructions via Telegram. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can use it when the user explicitly requests notification.
+name: telegram
+description: Send and receive Telegram messages, run interactive loops with the user via Telegram. Use when the user asks to be notified, messaged, or alerted about task completion, job status, or any result — and when they want to reply with follow-up instructions via Telegram. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can use it when the user explicitly requests it.
 ---
 
-# Notifications
+# Telegram
 
 Send and receive Telegram messages via `utils/telegram_bot.sh`. Use when the user says things like "send me a TG message", "notify me when done", "alert me on Telegram", or "wait for my TG reply".
 
@@ -76,13 +76,13 @@ If this succeeds, done. If credentials don't exist on the host either, go to Ste
 
 Tell the user what failed and give minimal next steps. Example:
 
-> Could not send Telegram notification — no credentials found.
+> Could not send Telegram message — no credentials found.
 > `~/.tg_config` is missing in both the container and the host.
 > Want me to help set up a Telegram bot? (takes ~2 minutes)
 
 Or if host-cmd is unavailable:
 
-> Could not send Telegram notification — `~/.tg_config` not found in the container, and host-cmd is not available.
+> Could not send Telegram message — `~/.tg_config` not found in the container, and host-cmd is not available.
 > Want me to help set up Telegram credentials locally?
 
 If the user says yes, walk them through `docs/notifications.md` setup:
@@ -133,7 +133,7 @@ step 200: loss=2.15, TGS=1248.7
 
 ## Interactive loop
 
-**Every time you send a TG notification, enter an interactive wait loop.** This lets the user reply on Telegram with follow-up instructions without returning to the Cursor GUI. All rules in this section (recv, clarification, multi-message handling, timeout) apply only while the loop is active — do NOT call recv or wait for TG replies outside this loop.
+**Every time you send a TG result message, enter an interactive wait loop.** This lets the user reply on Telegram with follow-up instructions without returning to the agent chat. All rules in this section (recv, clarification, multi-message handling, timeout) apply only while the loop is active — do NOT call recv or wait for TG replies outside this loop.
 
 ### Protocol
 
@@ -144,7 +144,7 @@ step 200: loss=2.15, TGS=1248.7
    > ⏳ \_Timeout: {duration}\_
    > ━━━━━━━━━━━━━━━━━━━━
 
-Replace `{duration}` with the actual timeout in the most natural unit (e.g., "10 minutes", "1 hour", "2 hours"). The `*...*` renders as **bold** and `_..._` renders as _italic_ in Telegram. The ━ line, 💬, and ⏳ are literal characters. Send this hint after every result notification that enters the recv loop — NOT after echo messages (step 3) or progress reports (step 8).
+Replace `{duration}` with the actual timeout in the most natural unit (e.g., "10 minutes", "1 hour", "2 hours"). The `*...*` renders as **bold** and `_..._` renders as _italic_ in Telegram. The ━ line, 💬, and ⏳ are literal characters. Send this hint after every result message that enters the recv loop — NOT after echo messages (step 3) or progress reports (step 8).
 
 2. **Run `recv`** to wait for the user's reply. Background it immediately so you can poll:
 
@@ -174,9 +174,9 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
    In all cases, the echo message should reflect your interpretation of every received message so the user sees exactly what you plan to do.
 
-   After executing, send a new TG notification with the result. **Loop back to step 1** (send hint, run recv again).
+   After executing, send a new TG message with the result. **Loop back to step 1** (send hint, run recv again).
 
-4. **On timeout** (recv exits with code 1, output contains "Timeout"): send a final TG notification so the user knows the agent stopped listening, then end the loop. Report in the agent chat as well:
+4. **On timeout** (recv exits with code 1, output contains "Timeout"): send a final TG message so the user knows the agent stopped listening, then end the loop. Report in the agent chat as well:
 
    TG message:
 
@@ -229,10 +229,10 @@ Agent: "TG interactive loop ended — no reply within timeout."
 
 ## Integration with other skills
 
-This skill is opt-in. Only use it when the user explicitly asks for notification. Typical integration points:
+This skill is opt-in. Only use it when the user explicitly asks for Telegram messaging. Typical integration points:
 
 - **batch-sweep**: "notify me when the sweep is done" → send results table after Step 8
 - **model-config**: "TG me when the test job finishes" → send job status after Step 7
 - **job-triage**: "alert me if the job fails" → send failure summary
 
-Do not proactively send notifications unless the user requested them.
+Do not proactively send messages unless the user requested them.
