@@ -37,10 +37,11 @@ This starts a read-only [Prometheus](https://prometheus.io/) instance (no scrapi
 
 ## Telegram messaging
 
-Standalone utility for sending and receiving [Telegram](https://telegram.org/) messages via the Bot API. Handles URL-encoding for rich content (Markdown, code blocks, special characters). Credentials are auto-sourced from `~/.tg_env` after [one-time setup](notifications.md#one-time-setup).
+Standalone utility for sending and receiving [Telegram](https://telegram.org/) messages via the Bot API. Handles URL-encoding for rich content (Markdown, code blocks, special characters). Credentials are loaded from `~/.tg_config` after [one-time setup](notifications.md#one-time-setup). Supports multiple bot profiles (`-b <name>`) for concurrent sessions.
 
 ```bash
 utils/telegram_bot.sh send "Hello *world*"
+utils/telegram_bot.sh -b alerts send "Job failed"
 echo "Deploy complete" | utils/telegram_bot.sh send
 utils/telegram_bot.sh recv --timeout 300
 ```
@@ -49,7 +50,7 @@ See [Notifications](notifications.md) for full usage, programmable patterns, and
 
 ## Monitor a Slurm job with Telegram alerts
 
-Sends Telegram push notifications for [Slurm](https://slurm.schedmd.com/) job state changes, hang detection, and periodic log updates. Credentials are auto-sourced from `~/.tg_env` after [one-time setup](notifications.md#one-time-setup).
+Sends Telegram push notifications for [Slurm](https://slurm.schedmd.com/) job state changes, hang detection, and periodic log updates. Credentials are loaded from `~/.tg_config` after [one-time setup](notifications.md#one-time-setup).
 
 ```bash
 utils/slurm_job_monitor.sh -j <slurm_job_id>

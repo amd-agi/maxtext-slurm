@@ -7,7 +7,7 @@ A programmable notification system built on [Telegram](https://telegram.org/). T
 | `utils/telegram_bot.sh` | General-purpose CLI for sending and receiving Telegram messages — use it in scripts, pipelines, or interactively |
 | `utils/slurm_job_monitor.sh` | Automated [Slurm](https://slurm.schedmd.com/) job monitoring with push notifications (built on `telegram_bot.sh`) |
 
-Both scripts auto-source credentials from `~/.tg_env` — set up once, use everywhere.
+Both scripts read credentials from `~/.tg_config` — set up once, use everywhere. Multiple bot profiles are supported for concurrent sessions or routing to different chats.
 
 ## One-time setup
 
@@ -15,14 +15,57 @@ Create a Telegram bot and save credentials:
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → get your **bot token**
 2. Start a chat with your bot, then get your **chat ID** from `https://api.telegram.org/bot<TOKEN>/getUpdates`
-3. Save credentials to `~/.tg_env`:
+3. Save credentials to `~/.tg_config`:
    ```bash
-   echo 'export TG_BOT_TOKEN="your_token_here"' >> ~/.tg_env
-   echo 'export TG_CHAT_ID="your_chat_id_here"' >> ~/.tg_env
+   install -m 600 /dev/null ~/.tg_config
+   # Then add your credentials:
    ```
+   ```
+   BotToken your_token_here
+   ChatID your_chat_id_here
+   ```
+   That's it — two lines. The file has `600` permissions (owner-only).
 4. Test: `utils/telegram_bot.sh send "Hello from $(hostname)"`
 
 Tutorial: [Telegram Bot API — Getting Started](https://core.telegram.org/bots/tutorial)
+
+### Multiple bot profiles
+
+Add named `Bot` blocks for concurrent sessions or different channels:
+
+```
+BotToken your_default_token
+ChatID your_default_chat
+
+Bot alerts
+    BotToken your_alerts_token
+    ChatID your_alerts_chat
+
+Bot team
+    BotToken your_team_token
+    ChatID your_team_group_chat
+    ParseMode HTML
+```
+
+Select a profile with `-b`:
+
+```bash
+utils/telegram_bot.sh -b alerts send "Job failed"
+utils/telegram_bot.sh -b team send "Deploy complete"
+utils/telegram_bot.sh send "Hello"  # uses default
+```
+
+Default resolution (when no `-b` is given):
+
+1. `Bot default` block — if it exists
+2. Top-level key-value pairs (before any `Bot` block)
+3. First `Bot` block in the file
+
+Each `Bot` block with a unique `BotToken` has its own Telegram message queue, allowing concurrent `recv` sessions without message conflicts.
+
+### Legacy migration
+
+If a legacy credential file exists from an earlier setup, `telegram_bot.sh` will automatically migrate it to `~/.tg_config` on first run (creating a `default` profile) and remove the old file. No manual action needed.
 
 ## telegram_bot.sh
 
@@ -31,8 +74,11 @@ A subcommand-based CLI for interacting with the Telegram Bot API. Supports `send
 ### Sending messages
 
 ```bash
-# Simple message (credentials from ~/.tg_env)
+# Simple message (credentials from ~/.tg_config default profile)
 utils/telegram_bot.sh send "Checkpoint saved at step 10000"
+
+# Send to a named profile
+utils/telegram_bot.sh -b alerts send "Job failed on $(hostname)"
 
 # Pipe content
 echo "Deploy complete on $(hostname)" | utils/telegram_bot.sh send
@@ -43,7 +89,7 @@ utils/telegram_bot.sh send "*Training complete* — final loss: 2.31"
 # Plain text (no Markdown parsing) — safe for arbitrary content
 PARSE_MODE="" utils/telegram_bot.sh send "file_names_with_underscores & special chars"
 
-# Explicit credentials (override ~/.tg_env)
+# Explicit credentials (override config file)
 TG_BOT_TOKEN=tok TG_CHAT_ID=123 utils/telegram_bot.sh send "Hello"
 ```
 
@@ -91,7 +137,8 @@ some_command; utils/telegram_bot.sh send "Command finished (exit $?)"
 Credentials are resolved in order:
 
 1. `TG_BOT_TOKEN` / `TG_CHAT_ID` environment variables (inline or exported)
-2. Auto-sourced from `~/.tg_env` if env vars are not set
+2. `-b <name>` → named `Bot` block in `~/.tg_config`
+3. Default profile from `~/.tg_config` (`Bot default` > top-level values > first `Bot` block)
 
 ### Optional environment variables
 
@@ -125,6 +172,9 @@ utils/slurm_job_monitor.sh -j <slurm_job_id>
 # Custom hang timeout (10 min) and update interval (30 min, last 20 lines)
 utils/slurm_job_monitor.sh -j 12345 -t 600 -u 1800 -l 20
 
+# Use a specific bot profile
+utils/slurm_job_monitor.sh -j 12345 --profile alerts
+
 # Filter periodic updates to show only errors
 utils/slurm_job_monitor.sh -j 12345 -g "ERROR|WARNING"
 
@@ -137,8 +187,9 @@ utils/slurm_job_monitor.sh -j 12345 -g "DEBUG|TRACE" -v
 Credentials are resolved in order:
 
 1. `TG_BOT_TOKEN` / `TG_CHAT_ID` environment variables
-2. Auto-sourced from `~/.tg_env`
-3. `-b` / `-c` flags (legacy, still supported — overrides env vars when both set)
+2. `--profile <name>` → named `Bot` block in `~/.tg_config`
+3. Default profile from `~/.tg_config`
+4. `-b` / `-c` flags (legacy, still supported)
 
 ### Tips
 
