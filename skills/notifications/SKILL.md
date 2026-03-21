@@ -150,7 +150,18 @@ python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 660 \
 
 Run with `block_until_ms: 0` to background it, then poll the terminal file every ~30 seconds.
 
-3. **On reply**: read the user's instructions from the command output. If multiple messages arrived at once (newline-separated in the output), read them all and synthesize the overall intent — do NOT execute them one by one. Later messages often refine or supersede earlier ones. If the instructions are ambiguous, send a TG message asking for clarification and run recv again instead of guessing. Otherwise, execute the synthesized instructions, then send a new TG notification with the result. **Loop back to step 1** (append the hint again, run recv again).
+3. **On reply**: read the user's instructions from the command output.
+
+   **Echo before executing** — immediately send a short TG message paraphrasing what you understood and that you're starting work. This confirms receipt, lets the user catch misinterpretations early, and sets expectations for longer tasks. Example: "Got it: re-run the sweep with Y=5. Working on it..."
+
+   **Multi-message handling** — if multiple messages arrived at once (newline-separated in the output), read them all before doing anything. Classify them:
+   - **Refinements / corrections**: later messages update or supersede earlier ones (e.g. "use config A" then "actually use config B"). Treat only the final intent as the instruction.
+   - **Distinct tasks**: messages request unrelated work (e.g. "run job A" and "check logs for job B"). Execute them sequentially.
+   - **Unclear**: send a TG message listing what you received and ask which interpretation is correct. Run recv again instead of guessing.
+
+   In all cases, the echo message should reflect your interpretation of every received message so the user sees exactly what you plan to do.
+
+   After executing, send a new TG notification with the result. **Loop back to step 1** (append the hint again, run recv again).
 
 4. **On timeout** (recv exits with code 1, output contains "Timeout"): end the loop. Report in the Cursor chat:
 
@@ -162,6 +173,13 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
 7. **One loop at a time**: Telegram's `getUpdates` API is per-bot — any `recv` that confirms a message purges it from the queue for ALL consumers. Do NOT run interactive loops in multiple concurrent sessions with the same bot token. Only one session should use `recv` at a time; other sessions can still `send`.
 
+8. **Progress reports during long tasks**: while executing a user's instruction (between the echo and the result message), send intermediate progress updates for tasks that take more than a few minutes. Two strategies, not mutually exclusive:
+
+   - **Milestone-based**: report when a sub-task produces a genuinely meaningful result — something the user would care about. Routine steps ("ran a command", "read a file") are not milestones. A finding, a sub-result, or a completed phase is.
+   - **Time-based**: for long tasks with no natural milestones, send periodic heartbeats with context about what you're currently doing and what you've found so far. Estimate the total duration and space heartbeats proportionally.
+
+   **Anti-spam cap**: regardless of strategy, send no more than **2 progress messages per hour**. This forces selectivity — if many milestones occur in a short window, batch or skip most of them. Progress messages are one-way sends (no recv, no interaction hint) — do NOT re-enter the wait loop mid-task.
+
 ### Example agent flow
 
 ```
@@ -170,6 +188,7 @@ Agent: telegram_bot.sh send "Task complete. Result: X. Reply here with further i
 Agent: telegram_bot.sh recv --timeout 600  (backgrounded, polls terminal file)
 User (on TG): "now run it again with Y=5"
 Agent: reads reply from terminal output
+Agent: telegram_bot.sh send "Got it: re-run with Y=5. Working on it..."
 Agent: executes the instruction
 Agent: telegram_bot.sh send "Done. Y=5 result: Z. Reply here with further instructions..."
 Agent: telegram_bot.sh recv --timeout 600  (backgrounded again)
