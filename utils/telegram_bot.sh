@@ -197,7 +197,7 @@ load_env() {
     local profile="${_TG_BOT_PROFILE:-default}"
 
     # Try ~/.tg_config
-    if _parse_tg_config "$profile" 2>/dev/null; then
+    if _parse_tg_config "$profile"; then
         echo "Using Bot profile '$profile' from $TG_CONFIG_FILE" >&2
         return
     fi
