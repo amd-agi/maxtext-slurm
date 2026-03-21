@@ -137,16 +137,16 @@ python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 15 \
 
 ### Protocol
 
-1. **Append a hint** to the end of the TG message you send (Markdown formatting):
+1. **Append a hint footer** to the end of every TG message that enters the wait loop. The footer uses Telegram Markdown formatting and must include the separator lines, emojis, bold, and italic exactly as shown. Adjust the timeout to match the actual `--timeout` passed to `recv`. Example full message:
 
-```
-━━━━━━━━━━━━━━━━━━━━
-💬 *Reply here with instructions*
-⏳ _I'll wait for 10 minutes_
-━━━━━━━━━━━━━━━━━━━━
-```
+   > Task complete. Result: X.
+   >
+   > ━━━━━━━━━━━━━━━━━━━━
+   > 💬 \*Reply here with instructions\*
+   > ⏳ \_I'll wait for {duration}\_
+   > ━━━━━━━━━━━━━━━━━━━━
 
-Adjust the timeout value to match the actual `--timeout` passed to `recv`. Do NOT append this hint to progress report messages (step 8) — those are one-way sends.
+Replace `{duration}` with the actual timeout in the most natural unit (e.g., "10 minutes", "1 hour", "2 hours"). The `*...*` renders as **bold** and `_..._` renders as _italic_ in Telegram. The ━ line, 💬, and ⏳ are literal characters. Do NOT append this footer to progress report messages (step 8) or echo messages (step 3) — only to result notifications that enter the recv loop.
 
 2. **Run `recv`** to wait for the user's reply. Background it immediately so you can poll:
 
@@ -199,13 +199,13 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
 ```
 Agent: runs task, gets result
-Agent: telegram_bot.sh send "Task complete. Result: X. Reply here with further instructions..."
+Agent: telegram_bot.sh send "Task complete. Result: X.\n\n━━━━━━━━━━━━━━━━━━━━\n💬 *Reply here with instructions*\n⏳ _I'll wait for 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (10 = 600s ÷ 60)
 Agent: telegram_bot.sh recv --timeout 600  (backgrounded, polls terminal file)
 User (on TG): "now run it again with Y=5"
 Agent: reads reply from terminal output
-Agent: telegram_bot.sh send "Got it: re-run with Y=5. Working on it..."
+Agent: telegram_bot.sh send "Got it: re-run with Y=5. Working on it..."  (echo — no footer)
 Agent: executes the instruction
-Agent: telegram_bot.sh send "Done. Y=5 result: Z. Reply here with further instructions..."
+Agent: telegram_bot.sh send "Done. Y=5 result: Z.\n\n━━━━━━━━━━━━━━━━━━━━\n💬 *Reply here with instructions*\n⏳ _I'll wait for 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (same timeout)
 Agent: telegram_bot.sh recv --timeout 600  (backgrounded again)
 ... (no reply within 10 min) ...
 Agent: "TG interactive loop ended — no reply within timeout."
