@@ -9,20 +9,23 @@ Send and receive Telegram messages via `utils/telegram_bot.sh`. Use when the use
 
 ## Sending flow
 
-**NEVER read, print, or log the contents of `~/.tg_env`.** Only check if the file exists. The script auto-sources credentials internally.
+**NEVER read, print, or log the contents of `~/.tg_config`.** Only check if the file exists. The script loads credentials internally.
+
+If the user specifies a bot profile (e.g., "use the alerts channel"), pass `-b <name>` on every `send`/`recv` call. Otherwise, omit `-b` to use the `default` profile.
 
 Try in order. Stop at the first success.
 
 ### Step 1: Try from the container
 
 ```bash
-test -f ~/.tg_env && echo "EXISTS" || echo "NOT FOUND"
+test -f ~/.tg_config && echo "EXISTS" || echo "NOT FOUND"
 ```
 
-If `~/.tg_env` exists, send directly:
+If `~/.tg_config` exists, send directly:
 
 ```bash
 utils/telegram_bot.sh send "Your message here"
+utils/telegram_bot.sh -b alerts send "Your message here"  # named profile
 ```
 
 For multi-line messages, pipe from stdin:
@@ -32,7 +35,7 @@ echo "Line 1
 Line 2" | utils/telegram_bot.sh send
 ```
 
-If this succeeds, done. If `~/.tg_env` doesn't exist, go to Step 2.
+If this succeeds, done. If `~/.tg_config` doesn't exist, go to Step 2.
 
 ### Step 2: Try from the host via host-cmd
 
@@ -47,7 +50,7 @@ If it does NOT respond `ALIVE`, go to Step 3.
 If alive, check host credentials exist (never read or print the file contents):
 
 ```bash
-python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 10 "test -f ~/.tg_env && echo EXISTS || echo NOT_FOUND"
+python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 10 "test -f ~/.tg_config && echo EXISTS || echo NOT_FOUND"
 ```
 
 If credentials exist, send using the **write-to-file pattern** (direct quoting through host-cmd breaks on special characters):
@@ -65,6 +68,8 @@ python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 15 \
   "cat /tmp/tg_msg.txt | bash utils/telegram_bot.sh send"
 ```
 
+To use a named profile via host-cmd: `bash utils/telegram_bot.sh -b alerts send`
+
 If this succeeds, done. If credentials don't exist on the host either, go to Step 3.
 
 ### Step 3: Report failure and offer help
@@ -72,26 +77,29 @@ If this succeeds, done. If credentials don't exist on the host either, go to Ste
 Tell the user what failed and give minimal next steps. Example:
 
 > Could not send Telegram notification — no credentials found.
-> `~/.tg_env` is missing in both the container and the host.
+> `~/.tg_config` is missing in both the container and the host.
 > Want me to help set up a Telegram bot? (takes ~2 minutes)
 
 Or if host-cmd is unavailable:
 
-> Could not send Telegram notification — `~/.tg_env` not found in the container, and host-cmd is not available.
+> Could not send Telegram notification — `~/.tg_config` not found in the container, and host-cmd is not available.
 > Want me to help set up Telegram credentials locally?
 
 If the user says yes, walk them through `docs/notifications.md` setup:
 
 1. Message @BotFather on Telegram → `/newbot` → get **bot token**
 2. Start a chat with the bot, get **chat ID** from `https://api.telegram.org/bot<TOKEN>/getUpdates`
-3. Save: `echo 'export TG_BOT_TOKEN="..."' >> ~/.tg_env && echo 'export TG_CHAT_ID="..."' >> ~/.tg_env`
+3. Create `~/.tg_config` with `install -m 600 /dev/null ~/.tg_config`, then add:
+   ```
+   BotToken <token>
+   ChatID <chat_id>
+   ```
 4. Test: `utils/telegram_bot.sh send "Hello from $(hostname)"`
 
 ## Host-cmd pitfalls
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| `source: not found` | host-cmd uses `/bin/sh`, not bash | Don't use `source ~/.tg_env`; the script auto-sources it |
 | `syntax error near unexpected token` | Special chars in inline message | Use the write-to-file pattern above |
 | `command not found` on host | `utils/` path is relative to repo root | host-cmd cwd is already the repo root; `bash utils/telegram_bot.sh` works |
 | Empty message error | Heredoc EOF marker was indented | Use unindented `EOF` marker |

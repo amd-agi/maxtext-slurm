@@ -67,18 +67,18 @@ Usage: $SCRIPT_NAME -j <job_id> [options]
 
 Telegram credentials (in order of precedence):
     1. TG_BOT_TOKEN / TG_CHAT_ID environment variables
-    2. Auto-sourced from ~/.tg_env if env vars are not set
-    3. Flags: -b / -c (legacy, overrides env vars when both set)
+    2. --profile <name> → named Bot block in ~/.tg_config
+    3. Default profile from ~/.tg_config
+    4. Flags: -b / -c (legacy, still supported)
 
-    Recommended: save credentials to ~/.tg_env once, then just use -j:
-        echo 'export TG_BOT_TOKEN="..."' >> ~/.tg_env
-        echo 'export TG_CHAT_ID="..."'   >> ~/.tg_env
+    Recommended: save credentials to ~/.tg_config once, then just use -j:
         $SCRIPT_NAME -j 123456
 
 Options:
     -j, --job-id          SLURM job ID (required)
-    -b, --bot-token       Telegram bot token (legacy flag, prefer TG_BOT_TOKEN env var)
-    -c, --chat-id         Telegram chat ID (legacy flag, prefer TG_CHAT_ID env var)
+    --profile             Bot profile name from ~/.tg_config (default: "default")
+    -b, --bot-token       Telegram bot token (legacy flag, prefer ~/.tg_config)
+    -c, --chat-id         Telegram chat ID (legacy flag, prefer ~/.tg_config)
     -i, --interval        Check interval in seconds (default: $DEFAULT_CHECK_INTERVAL)
     -t, --timeout         Timeout in seconds (default: $DEFAULT_TIMEOUT)
     -u, --update-interval Periodic log update interval in seconds (default: $DEFAULT_UPDATE_INTERVAL, 0 to disable)
@@ -89,6 +89,7 @@ Options:
 
 Example:
     $SCRIPT_NAME -j 123456
+    $SCRIPT_NAME -j 123456 --profile alerts
     $SCRIPT_NAME -j 123456 -t 1800 -u 3600 -l 20
     $SCRIPT_NAME -j 123456 -g "ERROR|WARNING"
     $SCRIPT_NAME -j 123456 -g "DEBUG|TRACE" -v
@@ -120,9 +121,12 @@ EOF
 # ============================================================================
 
 parse_arguments() {
+    local tg_profile=""
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -j|--job-id) JOB_ID="$2"; shift 2 ;;
+            --profile) tg_profile="$2"; shift 2 ;;
             -b|--bot-token) TG_BOT_TOKEN="$2"; shift 2 ;;
             -c|--chat-id) TG_CHAT_ID="$2"; shift 2 ;;
             -i|--interval) CHECK_INTERVAL="$2"; shift 2 ;;
@@ -136,26 +140,27 @@ parse_arguments() {
         esac
     done
 
-    # Validate required arguments
     if [[ -z "$JOB_ID" ]]; then
         echo "Error: Missing required argument: -j/--job-id"
         usage
     fi
 
-    # Auto-source ~/.tg_env if credentials are still missing after env + flags
-    local tg_env_file="$HOME/.tg_env"
-    if [[ (-z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID") && -f "$tg_env_file" ]]; then
-        echo "Sourcing credentials from $tg_env_file"
-        # shellcheck source=/dev/null
-        source "$tg_env_file"
+    # Resolve credentials: env vars > --profile/default from ~/.tg_config > legacy -b/-c
+    if [[ -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ]]; then
+        local resolved
+        if [[ -n "$tg_profile" ]]; then
+            resolved=$("$TELEGRAM_BOT" -b "$tg_profile" _resolve_env) && eval "$resolved"
+        else
+            resolved=$("$TELEGRAM_BOT" _resolve_env) && eval "$resolved"
+        fi
     fi
 
     if [[ -z "$TG_BOT_TOKEN" ]]; then
-        echo "Error: TG_BOT_TOKEN not set. Add it to ~/.tg_env, export it, or use -b flag."
+        echo "Error: TG_BOT_TOKEN not set. Create ~/.tg_config, export it, or use -b flag."
         usage
     fi
     if [[ -z "$TG_CHAT_ID" ]]; then
-        echo "Error: TG_CHAT_ID not set. Add it to ~/.tg_env, export it, or use -c flag."
+        echo "Error: TG_CHAT_ID not set. Create ~/.tg_config, export it, or use -c flag."
         usage
     fi
 
