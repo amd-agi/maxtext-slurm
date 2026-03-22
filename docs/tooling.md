@@ -37,7 +37,7 @@ This starts a read-only [Prometheus](https://prometheus.io/) instance (no scrapi
 
 ## Telegram messaging
 
-Standalone utility for sending and receiving [Telegram](https://telegram.org/) messages via the Bot API. Handles URL-encoding for rich content (Markdown, code blocks, special characters). Credentials are loaded from `~/.tg_config` after [one-time setup](notifications.md#one-time-setup). Supports multiple bot profiles (`-b <name>`) for concurrent sessions.
+Standalone utility for sending and receiving [Telegram](https://telegram.org/) messages via the Bot API. Handles URL-encoding for rich content (Markdown, code blocks, special characters). Credentials are loaded from `~/.tg_config` after [one-time setup](notifications.md#one-time-setup). Supports multiple bot profiles (`-b <name>`); truly concurrent `recv` sessions require distinct bot tokens per profile.
 
 ```bash
 utils/telegram_bot.sh send "Hello *world*"
@@ -45,6 +45,8 @@ utils/telegram_bot.sh -b alerts send "Job failed"
 echo "Deploy complete" | utils/telegram_bot.sh send
 utils/telegram_bot.sh recv --timeout 300
 ```
+
+`recv` is a one-shot wait: when a message arrives it prints the text and exits `0`. Interactive loops must call `recv` again after handling that message.
 
 See [Notifications](notifications.md) for full usage, programmable patterns, and options.
 

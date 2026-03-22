@@ -53,15 +53,23 @@ If alive, check host credentials exist (never read or print the file contents):
 python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 10 "test -f ~/.tg_config && echo EXISTS || echo NOT_FOUND"
 ```
 
-If credentials exist, send using the **write-to-file pattern** (direct quoting through host-cmd breaks on special characters):
+If credentials exist, send using the **base64-to-file pattern**. This is the safest host-cmd path because direct quoting through host-cmd breaks on special characters, and even a heredoc embedded inside a double-quoted host-cmd argument can be mangled by the local shell before the command reaches the host.
 
 ```bash
-# Write message to a temp file on the host
-python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 10 "cat > /tmp/tg_msg.txt << 'EOF'
-Your message here.
+# Encode the message locally so Markdown backticks, $(), quotes, and newlines survive.
+ENCODED=$(python3 - <<'PY'
+import base64
+msg = """Your message here.
 Multiple lines are fine.
-Special chars & (parens) work.
-EOF"
+Markdown `backticks`, $(subshells), and emoji are safe.
+"""
+print(base64.b64encode(msg.encode()).decode())
+PY
+)
+
+# Decode into a temp file on the host
+python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 10 \
+  "python3 -c \"import base64; open('/tmp/tg_msg.txt','w').write(base64.b64decode('$ENCODED').decode())\""
 
 # Pipe the file into telegram_bot.sh
 python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 15 \
@@ -100,7 +108,7 @@ If the user says yes, walk them through `docs/notifications.md` setup:
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| `syntax error near unexpected token` | Special chars in inline message | Use the write-to-file pattern above |
+| `syntax error near unexpected token` / `command not found` before host-cmd runs | Local shell expanded backticks or `$()` inside the message | Use the base64-to-file pattern above, not inline text or a heredoc embedded in a double-quoted host-cmd argument |
 | `command not found` on host | `utils/` path is relative to repo root | host-cmd cwd is already the repo root; `bash utils/telegram_bot.sh` works |
 | Empty message error | Heredoc EOF marker was indented | Use unindented `EOF` marker |
 
@@ -135,6 +143,8 @@ step 200: loss=2.15, TGS=1248.7
 
 Once the agent sends its first TG result, it enters REPL mode — Telegram becomes the I/O channel. The agent reads instructions from TG, executes them, prints results back to TG, and loops. **Only two things exit REPL mode**: (1) recv timeout, or (2) the user explicitly asks to stop listening. Everything else — results, acknowledgments, errors, clarifications — feeds back into the loop.
 
+**Critical invariant:** the REPL belongs to the assistant, not to any single shell command. A `recv` invocation is only one blocking wait inside the loop. While REPL mode is active, the assistant must keep the turn alive: do NOT send a `final` response, do NOT end the turn, and do NOT treat a completed `recv` process as the end of the REPL. A `recv` exit code of `0` means a Telegram message arrived and the loop must continue.
+
 ### Protocol
 
 1. **Print** — send the result (if any), then **send the prompt**. The result uses Markdown (wrap technical identifiers in backticks — see Message formatting above). If looping back after a bare acknowledgment ("ok", "thanks"), skip the result and send only the prompt. The prompt is its own message:
@@ -163,7 +173,11 @@ python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 660 \
 
 Run with `block_until_ms: 0` to background it, then poll the terminal file every ~30 seconds.
 
+After starting `recv`, keep monitoring that background command until it either times out or returns a message. The assistant remains responsible for the REPL state the entire time.
+
 3. **Eval** — on reply, read the user's instructions from the command output.
+
+   If the `recv` process exited successfully (`exit_code: 0`), that is NOT an exit condition. It means new Telegram input is ready to evaluate. Read the output, handle the message, send the result and prompt as needed, then start the next `recv`.
 
    **Echo before executing** — immediately send a short TG message paraphrasing what you understood and that you're starting work. This confirms receipt, lets the user catch misinterpretations early, and sets expectations for longer tasks. Example: "Got it: re-run the sweep with Y=5. Working on it..."
 
@@ -259,6 +273,8 @@ Agent: "TG interactive loop ended — user requested."
 ## Integration with other skills
 
 This skill is opt-in. Only activate when the user explicitly asks for Telegram messaging. **Any TG send from another skill enters the REPL** — the agent sends the result, then enters REPL mode (step 1 → recv → loop). There are no fire-and-forget sends once TG is active.
+
+Once TG REPL mode is active, the assistant must not return control to the normal agent chat until the REPL exits by timeout or explicit user request.
 
 Typical integration points:
 
