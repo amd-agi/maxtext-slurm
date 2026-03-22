@@ -8,7 +8,7 @@
 #
 # Commands:
 #   send <message>        Send a message to a Telegram chat
-#   recv [--timeout SECS] Wait for a message (long polling, default: 600s)
+#   recv [--timeout SECS] Wait for one message batch (long polling, default: 600s)
 #
 # Credentials (in order of precedence):
 #    1. Environment variables: TG_BOT_TOKEN, TG_CHAT_ID
@@ -468,12 +468,14 @@ sys.exit(1)
 " "$chat_id"
 }
 
-# Wait for a message from Telegram using long polling.
+# Wait for one message batch from Telegram using long polling.
 #
 # Usage: cmd_recv [--timeout SECONDS]
 #
 # Prints the received message text to stdout and exits 0.
 # Exits 1 if no message is received within the timeout.
+# This is a one-shot operation, not a daemon: callers implementing a REPL
+# must invoke `recv` again after handling a successful result.
 #
 # Default timeout: 600 seconds (10 minutes).
 # Uses Telegram's long polling (60s per round) to minimize HTTP requests.
@@ -493,7 +495,7 @@ cmd_recv() {
                 ;;
             -h|--help)
                 echo "Usage: $SCRIPT_NAME recv [--timeout SECONDS]" >&2
-                echo "Wait for a message from Telegram (default timeout: 600s)." >&2
+                echo "Wait for one message batch from Telegram (default timeout: 600s)." >&2
                 exit 0
                 ;;
             *)
@@ -607,7 +609,7 @@ Usage: $SCRIPT_NAME [-b <bot>] <command> [args...]
 
 Commands:
     send <message>          Send a message to a Telegram chat
-    recv [--timeout SECS]   Wait for a message (default: 600s)
+    recv [--timeout SECS]   Wait for one message batch (default: 600s)
 
 Options:
     -b <name>   Select a Bot profile from ~/.tg_config (default: "default")

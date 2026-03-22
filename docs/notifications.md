@@ -7,7 +7,7 @@ A programmable notification system built on [Telegram](https://telegram.org/). T
 | `utils/telegram_bot.sh` | General-purpose CLI for sending and receiving Telegram messages — use it in scripts, pipelines, or interactively |
 | `utils/slurm_job_monitor.sh` | Automated [Slurm](https://slurm.schedmd.com/) job monitoring with push notifications (built on `telegram_bot.sh`) |
 
-Both scripts read credentials from `~/.tg_config` — set up once, use everywhere. Multiple bot profiles are supported for concurrent sessions or routing to different chats.
+Both scripts read credentials from `~/.tg_config` — set up once, use everywhere. Multiple bot profiles are supported for routing to different chats, and for concurrent `recv` sessions when those profiles use distinct bot tokens.
 
 ## One-time setup
 
@@ -31,7 +31,7 @@ Tutorial: [Telegram Bot API — Getting Started](https://core.telegram.org/bots/
 
 ### Multiple bot profiles
 
-Add named `Bot` blocks for concurrent sessions or different channels:
+Add named `Bot` blocks for different channels, or for concurrent `recv` sessions when each profile uses its own `BotToken`:
 
 ```
 BotToken your_default_token
@@ -106,6 +106,8 @@ utils/telegram_bot.sh recv --timeout 300
 ```
 
 The received message text is printed to stdout (exit 0). If no message arrives within the timeout, exits 1. Under the hood, it long-polls the Telegram API in 60-second rounds — one held-open HTTP connection at a time, no busy polling.
+
+`recv` is not a persistent listener daemon. Each successful call returns one batch of newly received message text and exits. If you're implementing a REPL or interactive workflow, handle that output and then invoke `recv` again for the next turn.
 
 ```bash
 # Send a question, wait for the reply
