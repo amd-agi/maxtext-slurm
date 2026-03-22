@@ -1,11 +1,11 @@
 ---
 name: telegram
-description: Send and receive Telegram messages, run interactive loops with the user via Telegram. Use when the user asks to be notified, messaged, or alerted about task completion, job status, or any result — and when they want to reply with follow-up instructions via Telegram. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can use it when the user explicitly requests it.
+description: Use Telegram as the agent's I/O channel. Once triggered, the agent enters a REPL state — reading instructions from TG, executing them, printing results back to TG, and looping. Use when the user asks to be notified, messaged, or alerted via Telegram, or wants to interact with the agent through TG. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can trigger it when the user explicitly requests it.
 ---
 
 # Telegram
 
-Send and receive Telegram messages via `utils/telegram_bot.sh`. Use when the user says things like "send me a TG message", "notify me when done", "alert me on Telegram", or "wait for my TG reply".
+Use Telegram as the agent's I/O channel via `utils/telegram_bot.sh`. Once activated, the agent enters a REPL state: all results go to TG, all instructions come from TG, and the loop runs until timeout or the user explicitly exits. Trigger phrases: "send me a TG message", "notify me when done", "alert me on Telegram", "wait for my TG reply".
 
 ## Sending flow
 
@@ -131,22 +131,22 @@ step 200: loss=2.15, TGS=1248.7
 ```
 ~~~
 
-## Interactive loop
+## REPL mode
 
-**Every time you send a TG result message, enter an interactive wait loop.** This lets the user reply on Telegram with follow-up instructions without returning to the agent chat. All rules in this section (recv, clarification, multi-message handling, timeout) apply only while the loop is active — do NOT call recv or wait for TG replies outside this loop.
+Once the agent sends its first TG result, it enters REPL mode — Telegram becomes the I/O channel. The agent reads instructions from TG, executes them, prints results back to TG, and loops. **Only two things exit REPL mode**: (1) recv timeout, or (2) the user explicitly asks to stop listening. Everything else — results, acknowledgments, errors, clarifications — feeds back into the loop.
 
 ### Protocol
 
-1. **Send the result**, then **send a separate hint message**. The result uses Markdown (wrap technical identifiers in backticks — see Message formatting above). The hint is its own message:
+1. **Print** — send the result (if any), then **send the prompt**. The result uses Markdown (wrap technical identifiers in backticks — see Message formatting above). If looping back after a bare acknowledgment ("ok", "thanks"), skip the result and send only the prompt. The prompt is its own message:
 
    > ━━━━━━━━━━━━━━━━━━━━
    > 💬 \*Awaiting further instructions\*
    > ⏳ \_Timeout: {duration}\_
    > ━━━━━━━━━━━━━━━━━━━━
 
-Replace `{duration}` with the actual timeout in the most natural unit (e.g., "10 minutes", "1 hour", "2 hours"). The `*...*` renders as **bold** and `_..._` renders as _italic_ in Telegram. The ━ line, 💬, and ⏳ are literal characters. Send this hint after every result message that enters the recv loop — NOT after echo messages (step 3) or progress reports (step 8).
+Replace `{duration}` with the actual timeout in the most natural unit (e.g., "10 minutes", "1 hour", "2 hours"). The `*...*` renders as **bold** and `_..._` renders as _italic_ in Telegram. The ━ line, 💬, and ⏳ are literal characters. Send this prompt at every loop-back point (after results, after acks) — NOT after echo messages (step 3) or progress reports (step 8).
 
-2. **Run `recv`** to wait for the user's reply. Background it immediately so you can poll:
+2. **Read** — run `recv` to wait for the user's input. Background it immediately so you can poll:
 
 From the container:
 
@@ -163,7 +163,7 @@ python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 660 \
 
 Run with `block_until_ms: 0` to background it, then poll the terminal file every ~30 seconds.
 
-3. **On reply**: read the user's instructions from the command output.
+3. **Eval** — on reply, read the user's instructions from the command output.
 
    **Echo before executing** — immediately send a short TG message paraphrasing what you understood and that you're starting work. This confirms receipt, lets the user catch misinterpretations early, and sets expectations for longer tasks. Example: "Got it: re-run the sweep with Y=5. Working on it..."
 
@@ -174,7 +174,9 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
    In all cases, the echo message should reflect your interpretation of every received message so the user sees exactly what you plan to do.
 
-   After executing, send a new TG message with the result. **Loop back to step 1** (send hint, run recv again).
+   **Peek before executing** — after sending the echo, do a quick `recv --timeout 1` before starting work. This catches last-second corrections the user sent after recv returned but before the echo was delivered (e.g., "wait, actually use Y=10"). If a correction is found, incorporate it, send a new echo reflecting the updated plan, and peek again (the user may send further adjustments after seeing the new echo). Only start execution once a peek comes back empty. Classify any found message using the same rules as mid-task peek (step 8).
+
+   After executing, send the result. If execution failed or errored, the error IS the result — send it as such. **Always loop back to step 1** (prompt + recv). No exceptions — the loop is a REPL.
 
 4. **On timeout** (recv exits with code 1, output contains "Timeout"): send a final TG message so the user knows the agent stopped listening, then end the loop. Report in the agent chat as well:
 
@@ -187,7 +189,7 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
    Agent chat: "TG interactive loop ended — no reply within timeout."
 
-5. **Early exit**: if the user's reply is just an acknowledgment ("done", "ok", "thanks", "stop"), end the loop without executing further work. Send a TG confirmation and report in the agent chat:
+5. **Exit (explicit only)**: end the REPL ONLY if the user explicitly asks to stop listening. Exit phrases: "stop listening", "exit loop", "done with TG", "that's all". Bare acknowledgments ("ok", "thanks", "done", "got it") are NOT exit signals — they mean the user saw the result; loop back to step 1. This rule applies everywhere: at the recv boundary AND during mid-task peek (step 8). When exiting, send a TG confirmation and report in the agent chat:
 
    TG message:
 
@@ -202,37 +204,66 @@ Run with `block_until_ms: 0` to background it, then poll the terminal file every
 
 7. **One loop at a time**: Telegram's `getUpdates` API is per-bot — any `recv` that confirms a message purges it from the queue for ALL consumers. Do NOT run interactive loops in multiple concurrent sessions with the same bot token. Only one session should use `recv` at a time; other sessions can still `send`.
 
-8. **Progress reports during long tasks**: while executing a user's instruction (between the echo and the result message), send intermediate progress updates for tasks that take more than a few minutes. Two strategies, not mutually exclusive:
+8. **Progress reports and mid-task peek**: while executing a user's instruction (between the echo and the result message), send intermediate progress updates for tasks that take more than a few minutes. Two strategies, not mutually exclusive:
 
    - **Milestone-based**: report when a sub-task produces a genuinely meaningful result — something the user would care about. Routine steps ("ran a command", "read a file") are not milestones. A finding, a sub-result, or a completed phase is.
    - **Time-based**: for long tasks with no natural milestones, send periodic heartbeats with context about what you're currently doing and what you've found so far. Estimate the total duration and space heartbeats proportionally.
 
-   **Anti-spam cap**: regardless of strategy, send no more than **2 progress messages per hour**. This forces selectivity — if many milestones occur in a short window, batch or skip most of them. Progress messages are one-way sends (no recv, no interaction hint) — do NOT re-enter the wait loop mid-task.
+   **Anti-spam cap**: regardless of strategy, send no more than **2 progress messages per hour**. This forces selectivity — if many milestones occur in a short window, batch or skip most of them.
+
+   **Peek for instructions**: after each progress send, do a quick non-blocking `recv --timeout 1` to check if the user sent a message while the agent was working. The script's Phase 1 checks pending messages instantly, so this adds ~1s from the container or ~2-3s via host-cmd (due to round-trip overhead). If nothing is pending, continue working. If a message is found, classify it:
+
+   - **Stop / cancel** ("stop", "cancel", "abort"): stop the current execution immediately. Send a summary of what was completed so far as the result, then **loop back to step 1** (prompt + recv). The loop stays alive. If the message matches an exit phrase (step 5), exit the REPL instead.
+   - **Adjustment** ("change X to Y", "skip that config", "also do Z"): incorporate the change into the remaining work. Echo the adjustment back ("Adjusting: changing X to Y, continuing...") and resume execution with the new parameters. No prompt, no recv — this is a one-way acknowledgment, same as an echo message.
+   - **Unrelated / new task**: echo that you received it and will handle it after the current task finishes ("Noted — will handle after current task."). Continue working. When the current task finishes, send its result (without prompt), then immediately execute the queued instruction. Send the queued task's result and loop back to step 1 (prompt + recv).
+   - **Unclear**: pause execution, send a TG message describing what you received and asking for clarification, then do a short `recv --timeout 120` to wait for the answer. If the user clarifies, act on it (stop, adjust, or queue). If it times out, resume the original execution as-is and note in the next progress send that the earlier message was unclear.
+
+   Progress sends and peek checks do NOT include the prompt — only result messages at the end of a task (step 1) get the prompt.
 
 ### Example agent flow
 
 ```
 Agent: runs task, gets result
-Agent: telegram_bot.sh send "*Task complete.* Result: `X`."                (Markdown)
-Agent: telegram_bot.sh send "━━━━━━━━━━━━━━━━━━━━\n💬 *Awaiting further instructions*\n⏳ _Timeout: 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (hint)
-Agent: telegram_bot.sh recv --timeout 600  (backgrounded, polls terminal file)
+Agent: telegram_bot.sh send "*Task complete.* Result: `X`."                (result)
+Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (prompt)
+Agent: telegram_bot.sh recv --timeout 600  (backgrounded, polls terminal)
 User (on TG): "now run it again with Y=5"
 Agent: reads reply from terminal output
-Agent: telegram_bot.sh send "Got it: re-run with `Y`=5. Working on it..."  (echo — no hint)
-Agent: executes the instruction
-Agent: telegram_bot.sh send "*Done.* `Y`=5 result: `Z`."                  (Markdown)
-Agent: telegram_bot.sh send "━━━━━━━━━━━━━━━━━━━━\n💬 *Awaiting further instructions*\n⏳ _Timeout: 10 minutes_\n━━━━━━━━━━━━━━━━━━━━"  (hint)
-Agent: telegram_bot.sh recv --timeout 600  (backgrounded again)
-... (no reply within 10 min) ...
-Agent: "TG interactive loop ended — no reply within timeout."
+Agent: telegram_bot.sh send "Got it: re-run with `Y`=5. Working on it..."  (echo — no prompt)
+Agent: telegram_bot.sh recv --timeout 1                                    (pre-exec peek — nothing)
+Agent: starts long execution...
+Agent: telegram_bot.sh send "Progress: 3/10 configs done..."               (progress)
+Agent: telegram_bot.sh recv --timeout 1                                    (peek — nothing)
+Agent: continues working...
+Agent: telegram_bot.sh send "Progress: 6/10 configs done..."               (progress)
+Agent: telegram_bot.sh recv --timeout 1                                    (peek — message found!)
+User (on TG): "stop"
+Agent: stops current execution
+Agent: telegram_bot.sh send "*Stopped.* 6/10 configs completed: ..."       (result)
+Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (prompt)
+Agent: telegram_bot.sh recv --timeout 600  (loop continues — waiting)
+User (on TG): "ok run the remaining 4 with Z=3"
+Agent: telegram_bot.sh send "Got it: configs 7-10 with `Z`=3..."           (echo)
+Agent: executes...
+Agent: telegram_bot.sh send "*Done.* Remaining 4 configs complete: ..."    (result)
+Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (prompt)
+Agent: telegram_bot.sh recv --timeout 600  (waiting again)
+User (on TG): "thanks"
+Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (ack → prompt only, loop back)
+Agent: telegram_bot.sh recv --timeout 600  (still listening)
+User (on TG): "stop listening"
+Agent: telegram_bot.sh send "━━━...✅ *Acknowledged*...━━━"                (explicit exit)
+Agent: "TG interactive loop ended — user requested."
 ```
 
 ## Integration with other skills
 
-This skill is opt-in. Only use it when the user explicitly asks for Telegram messaging. Typical integration points:
+This skill is opt-in. Only activate when the user explicitly asks for Telegram messaging. **Any TG send from another skill enters the REPL** — the agent sends the result, then enters REPL mode (step 1 → recv → loop). There are no fire-and-forget sends once TG is active.
 
-- **batch-sweep**: "notify me when the sweep is done" → send results table after Step 8
-- **model-config**: "TG me when the test job finishes" → send job status after Step 7
-- **job-triage**: "alert me if the job fails" → send failure summary
+Typical integration points:
+
+- **batch-sweep**: "notify me when the sweep is done" → send results table, enter REPL
+- **model-config**: "TG me when the test job finishes" → send job status, enter REPL
+- **job-triage**: "alert me if the job fails" → send failure summary, enter REPL
 
 Do not proactively send messages unless the user requested them.
