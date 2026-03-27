@@ -1,6 +1,6 @@
 ---
 name: telegram
-description: Use Telegram as the agent's I/O channel. Once triggered, the agent enters a REPL state — reading instructions from TG, executing them, printing results back to TG, and looping. Use when the user asks to be notified, messaged, or alerted via Telegram, or wants to interact with the agent through TG. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can trigger it when the user explicitly requests it.
+description: "Use Telegram as the agent's I/O channel. Once triggered, the agent enters a REPL state — reading instructions from TG, executing them, printing results back to TG, and looping. Use when the user asks to be notified, messaged, or alerted via Telegram, or wants to interact with the agent through TG. This is a cross-cutting skill — other skills (batch-sweep, model-config, job-triage) can trigger it when the user explicitly requests it."
 ---
 
 # Telegram
@@ -143,8 +143,6 @@ step 200: loss=2.15, TGS=1248.7
 
 Once the agent sends its first TG result, it enters REPL mode — Telegram becomes the I/O channel. The agent reads instructions from TG, executes them, prints results back to TG, and loops. **Only two things exit REPL mode**: (1) recv timeout, or (2) the user explicitly asks to stop listening. Everything else — results, acknowledgments, errors, clarifications — feeds back into the loop.
 
-**Critical invariant:** the REPL belongs to the assistant, not to any single shell command. A `recv` invocation is only one blocking wait inside the loop. While REPL mode is active, the assistant must keep the turn alive: do NOT send a `final` response, do NOT end the turn, and do NOT treat a completed `recv` process as the end of the REPL. A `recv` exit code of `0` means a Telegram message arrived and the loop must continue.
-
 ### Protocol
 
 1. **Print** — send the result (if any), then **send the prompt**. The result uses Markdown (wrap technical identifiers in backticks — see Message formatting above). If looping back after a bare acknowledgment ("ok", "thanks"), skip the result and send only the prompt. The prompt is its own message:
@@ -236,39 +234,7 @@ After starting `recv`, keep monitoring that background command until it either t
 
 ### Example agent flow
 
-```
-Agent: runs task, gets result
-Agent: telegram_bot.sh send "*Task complete.* Result: `X`."                (result)
-Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (prompt)
-Agent: telegram_bot.sh recv --timeout 600  (backgrounded, polls terminal)
-User (on TG): "now run it again with Y=5"
-Agent: reads reply from terminal output
-Agent: telegram_bot.sh send "Got it: re-run with `Y`=5. Working on it..."  (echo — no prompt)
-Agent: telegram_bot.sh recv --timeout 1                                    (pre-exec peek — nothing)
-Agent: starts long execution...
-Agent: telegram_bot.sh send "Progress: 3/10 configs done..."               (progress)
-Agent: telegram_bot.sh recv --timeout 1                                    (peek — nothing)
-Agent: continues working...
-Agent: telegram_bot.sh send "Progress: 6/10 configs done..."               (progress)
-Agent: telegram_bot.sh recv --timeout 1                                    (peek — message found!)
-User (on TG): "stop"
-Agent: stops current execution
-Agent: telegram_bot.sh send "*Stopped.* 6/10 configs completed: ..."       (result)
-Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (prompt)
-Agent: telegram_bot.sh recv --timeout 600  (loop continues — waiting)
-User (on TG): "ok run the remaining 4 with Z=3"
-Agent: telegram_bot.sh send "Got it: configs 7-10 with `Z`=3..."           (echo)
-Agent: executes...
-Agent: telegram_bot.sh send "*Done.* Remaining 4 configs complete: ..."    (result)
-Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (prompt)
-Agent: telegram_bot.sh recv --timeout 600  (waiting again)
-User (on TG): "thanks"
-Agent: telegram_bot.sh send "━━━...💬 *Awaiting*...⏳ _10 minutes_...━━━"  (ack → prompt only, loop back)
-Agent: telegram_bot.sh recv --timeout 600  (still listening)
-User (on TG): "stop listening"
-Agent: telegram_bot.sh send "━━━...✅ *Acknowledged*...━━━"                (explicit exit)
-Agent: "TG interactive loop ended — user requested."
-```
+See [references/repl-example.md](references/repl-example.md) for a complete REPL session walkthrough showing result → prompt → recv → echo → peek → progress → mid-task peek → stop/resume → ack → exit.
 
 ## Integration with other skills
 

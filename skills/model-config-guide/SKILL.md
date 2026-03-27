@@ -1,6 +1,6 @@
 ---
 name: model-config-guide
-description: Create GPU config files to support existing MaxText model definitions on AMD GPU clusters. Use when the user wants to add a model, create a config, support a new model, or asks about model configs, parallelism, batch size, OOM, quantization, or .gpu.yml files.
+description: "Create and configure GPU config files (.gpu.yml) for MaxText model definitions on AMD GPU clusters — including parallelism strategy selection (FSDP, expert, pipeline), batch size and sequence length tuning, FP8 quantization setup, MoE-specific configuration, and inline model architecture definitions. Use when the user wants to add a model, create a config, support a new model, or asks about model configs, parallelism, batch size, OOM, quantization, or .gpu.yml files."
 ---
 
 # Model Config Guide
