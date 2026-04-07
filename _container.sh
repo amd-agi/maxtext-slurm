@@ -296,23 +296,22 @@ CONTAINER_NAME="maxtext-slurm-${JOB_ID}-node${NODE_RANK}"
 "${DOCKER_CMD[@]}" rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
 # NOTE: All IB/ANP-related mount options go here!
-if [[ "$DOCKER_IMAGE_HAS_AINIC" == "true" ]] || [[ "$MODE" == "interactive" ]]; then
+#
+# The container's libibverbs user-space provider (libionic1) must match the
+# host's ionic kernel driver / firmware version.  When they diverge (e.g.
+# container ships libionic1 54.0-149 but firmware 1.117.5-a-66 needs 54.0-185),
+# RCCL's IB plugin cannot enumerate devices and silently falls back to TCP
+# sockets, causing ~20x performance degradation.  Bind-mounting the host
+# libraries ensures the provider always matches the running kernel driver.
+IB_MOUNT_OPTIONS=()
+if [[ -e "/etc/libibverbs.d/ionic.driver" ]] || [[ -e "/etc/libibverbs.d/bnxt_re.driver" ]]; then
+    echo "Host IB drivers detected: mounting /etc/libibverbs.d and /usr/lib/x86_64-linux-gnu."
     IB_MOUNT_OPTIONS=(
-        # NOTE: has no effect unless ANP is installed in the container
-#        -e NCCL_NET_PLUGIN=librccl-anp.so
+        -v /etc/libibverbs.d:/etc/libibverbs.d:ro
+        -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
     )
 else
-    # Detect and configure host IB-related mounts (bnxt_re driver present on host)
-    if [[ -e "/etc/libibverbs.d/bnxt_re.driver" ]]; then
-        echo "Detected bnxt_re driver on host: enabling /etc/libibverbs.d mounts."
-        IB_MOUNT_OPTIONS=(
-            -v /etc/libibverbs.d:/etc/libibverbs.d:ro
-            -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
-        )
-    else
-        echo "No /etc/libibverbs.d/bnxt_re.driver found: disabling IB mounts."
-        IB_MOUNT_OPTIONS=()
-    fi
+    echo "No host IB drivers found: no IB mounts."
 fi
 
 # InfiniBand device passthrough (safe if IB is absent)
