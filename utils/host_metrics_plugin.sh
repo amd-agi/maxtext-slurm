@@ -37,8 +37,8 @@
 #   hw_io_pressure_{some,full}_pct{host}              I/O pressure (PSI 10s avg)
 #   hw_io_pressure_{some,full}_avg300_pct{host}       I/O pressure (PSI 300s avg)
 #   hw_io_pressure_full_total_us{host}                Cumulative I/O stall time (µs)
-#   hw_dmesg_gpu_errors_total{host}                   GPU/driver errors in kernel ring buffer
-#   hw_gpu_user_processes{host}                       Processes with /dev/kfd open (GPU users)
+#   hw_dmesg_gpu_errors_total{host}                   GPU/driver errors in kernel ring buffer (AMD + NVIDIA)
+#   hw_gpu_user_processes{host}                       GPU-using processes (AMD: /dev/kfd; NVIDIA: nvidia-smi)
 
 HOSTNAME_SHORT="${1:?Usage: host_metrics_plugin.sh <hostname>}"
 
@@ -324,7 +324,7 @@ except Exception as e:
 # RDMA port link state  (/sys/class/infiniband/*/ports/*/state)
 # =========================================================================
 # Reports whether each RDMA port is ACTIVE (state 4) or not.  A link flap
-# (ACTIVE → DOWN → ACTIVE) during training would cause RCCL collectives
+# (ACTIVE → DOWN → ACTIVE) during training would cause RCCL/NCCL collectives
 # to hang or timeout.  Exporting as a gauge: 1 = ACTIVE, 0 = not active.
 
 add('# HELP hw_rdma_port_state RDMA port link state (1=ACTIVE, 0=not active).')
@@ -395,7 +395,7 @@ except Exception as e:
 # During large checkpoint saves (hundreds of GB flushed to shared storage),
 # these spike on the writing nodes and directly correlate with
 # hw_procs_blocked — making them the most direct indicator of
-# checkpoint I/O pressure that can stall heartbeats and NCCL collectives.
+# checkpoint I/O pressure that can stall heartbeats and RCCL/NCCL collectives.
 #
 # Not exported by Ray (psutil.virtual_memory() omits these fields).
 
@@ -466,9 +466,10 @@ except Exception as e:
 # =========================================================================
 # Kernel ring buffer GPU/driver error count  (/dev/kmsg)
 # =========================================================================
-# Counts err/warn lines matching amdgpu/drm/xgmi in the kernel ring buffer.
-# This catches GPU faults, XGMI link resets, PCIe errors, and other
-# kernel-level events that are invisible to sysfs counters and userspace.
+# Counts err/warn lines matching GPU driver keywords in the kernel ring buffer.
+# AMD keywords:   amdgpu, drm, xgmi  — catches GPU faults, XGMI link resets.
+# NVIDIA keywords: nvidia, nvrm, nvlink, xid — catches Xid errors, NVLink faults.
+# Also matches generic 'drm' (Direct Rendering Manager), used by both vendors.
 # The counter is cumulative over the kernel ring buffer lifetime.
 #
 # Reads /dev/kmsg directly (not the syslog(2) syscall used by `dmesg`)
@@ -477,7 +478,7 @@ except Exception as e:
 # character device interface and always reflects the host kernel buffer.
 #
 # Requires /dev/kmsg to be readable (--privileged or CAP_SYSLOG).
-# ~8ms for 10K messages on MI300X nodes.
+# ~8ms for 10K messages on MI300X / B200 nodes.
 
 add('# HELP hw_dmesg_gpu_errors_total GPU/driver error lines in kernel ring buffer.')
 add('# TYPE hw_dmesg_gpu_errors_total counter')
@@ -506,7 +507,9 @@ try:
                 if pri > 4:  # only err(3) and warn(4) and below
                     continue
                 msg = parts[1].lower()
-                if ('amdgpu' in msg or 'drm' in msg or 'xgmi' in msg) and \
+                if ('amdgpu' in msg or 'drm' in msg or 'xgmi' in msg or
+                    'nvidia' in msg or 'nvrm' in msg or 'nvlink' in msg or
+                    'xid' in msg) and \
                    ('error' in msg or 'fault' in msg or 'fail' in msg or
                     'reset' in msg or 'timeout' in msg):
                     count += 1
@@ -573,27 +576,42 @@ except Exception as e:
 # to detect NFS I/O stalls during checkpoint saves.
 
 # =========================================================================
-# GPU user process count  (/sys/class/kfd/kfd/proc/)
+# GPU user process count
 # =========================================================================
-# The KFD (Kernel Fusion Driver) maintains a directory of PIDs that have
-# opened /dev/kfd.  Reading this directory is O(1) — no /proc/*/fd scan
-# needed.  The ROCm runtime opens /dev/kfd for GPU access, so this count
-# is a reliable indicator of whether training processes are alive.
+# AMD:    The KFD (Kernel Fusion Driver) maintains a directory of PIDs that
+#         have opened /dev/kfd.  Reading this directory is O(1) — no
+#         /proc/*/fd scan needed.  The ROCm runtime opens /dev/kfd for GPU
+#         access, so this count is a reliable indicator of whether training
+#         processes are alive.
+# NVIDIA: Falls back to `nvidia-smi --query-compute-apps=pid` which lists
+#         PIDs with active CUDA contexts on any GPU.
 #
 # This is the most direct liveness signal for the failure mode we observed:
-# a silent _exit(1) from inside RCCL would cause this count to drop before
-# the heartbeat timeout fires.
+# a silent _exit(1) from inside RCCL/NCCL would cause this count to drop
+# before the heartbeat timeout fires.
 
-add('# HELP hw_gpu_user_processes Number of processes with /dev/kfd open (GPU users).')
+add('# HELP hw_gpu_user_processes Number of GPU-using processes (AMD: /dev/kfd; NVIDIA: nvidia-smi).')
 add('# TYPE hw_gpu_user_processes gauge')
 
 try:
+    gpu_user_count = 0
     kfd_proc = '/sys/class/kfd/kfd/proc'
     if os.path.isdir(kfd_proc):
-        pids = [d for d in os.listdir(kfd_proc) if d.isdigit()]
-        add(f'hw_gpu_user_processes{{host="{hostname}"}} {len(pids)}')
+        # AMD: KFD driver tracks PIDs that opened /dev/kfd
+        gpu_user_count = len([d for d in os.listdir(kfd_proc) if d.isdigit()])
     else:
-        add(f'hw_gpu_user_processes{{host="{hostname}"}} 0')
+        # NVIDIA: query compute processes via nvidia-smi
+        try:
+            import subprocess as _sp
+            _nv = _sp.run(
+                ['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader'],
+                capture_output=True, text=True, timeout=5
+            )
+            if _nv.returncode == 0:
+                gpu_user_count = len([l for l in _nv.stdout.strip().splitlines() if l.strip()])
+        except (FileNotFoundError, Exception):
+            pass
+    add(f'hw_gpu_user_processes{{host="{hostname}"}} {gpu_user_count}')
 except Exception as e:
     print(f'[host_plugin] GPU user processes: {e}', file=sys.stderr)
 

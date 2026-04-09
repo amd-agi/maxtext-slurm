@@ -1,28 +1,39 @@
 #!/usr/bin/env bash
-# gpu_metrics_plugin.sh — Prometheus metrics plugin: AMD GPU hardware.
+# gpu_metrics_plugin.sh — Prometheus metrics plugin: GPU hardware (AMD + NVIDIA).
 #
-# Collects per-GPU temperature, power draw, clock speeds, and VRAM usage
-# via sysfs (zero subprocess overhead — plain file reads from
-# /sys/class/hwmon and /sys/class/drm).
+# AMD:    Collects per-GPU temperature, power, clocks, VRAM, and RAS errors
+#         via sysfs (zero subprocess overhead — plain file reads from
+#         /sys/class/hwmon, /sys/class/drm, and /sys/bus/pci/drivers/amdgpu).
+# NVIDIA: Collects the same metrics via a single `nvidia-smi --query-gpu` call.
 #
-# Always collects XGMI RAS error counters via sysfs (zero overhead).
+# Always collects PCIe AER error counters for both vendors via sysfs.
+# AMD-specific: XGMI/UMC/GFX/MMHUB/SDMA RAS counters via sysfs.
 #
 # Called by metrics_exporter.sh — outputs Prometheus text to stdout.
 #
 # Metrics (all prefixed hw_ for grouping in Prometheus UI):
+#
+#   --- Common (AMD + NVIDIA) ---
 #   hw_gpu_temperature_celsius{gpu,host}           Junction temperature (°C)
 #   hw_gpu_power_watts{gpu,host}                   Current power draw (W)
 #   hw_gpu_clock_mhz{gpu,host,type=sclk|mclk}     Core / memory clock (MHz)
 #   hw_gpu_vram_used_bytes{gpu,host}                VRAM currently used (bytes)
 #   hw_gpu_vram_total_bytes{gpu,host}               VRAM total capacity (bytes)
+#   hw_gpu_pcie_correctable_total{gpu,host}          PCIe correctable AER errors
+#   hw_gpu_pcie_nonfatal_total{gpu,host}             PCIe non-fatal AER errors
+#   hw_gpu_pcie_fatal_total{gpu,host}                PCIe fatal AER errors
+#
+#   --- NVIDIA only ---
+#   hw_gpu_utilization_pct{gpu,host}               GPU compute utilization (%)
+#   hw_gpu_ras_ecc_ce_total{gpu,host}              Correctable ECC errors
+#   hw_gpu_ras_ecc_ue_total{gpu,host}              Uncorrectable ECC errors
+#
+#   --- AMD only (fine-grained RAS via sysfs) ---
 #   hw_gpu_ras_umc_{ue,ce}_total{gpu,host}         HBM memory ECC errors
 #   hw_gpu_ras_xgmi_{ue,ce}_total{gpu,host}        XGMI/WAFL link errors
 #   hw_gpu_ras_gfx_{ue,ce}_total{gpu,host}         Compute engine errors
 #   hw_gpu_ras_mmhub_{ue,ce}_total{gpu,host}       Memory hub errors
 #   hw_gpu_ras_sdma_{ue,ce}_total{gpu,host}        SDMA engine errors
-#   hw_gpu_pcie_correctable_total{gpu,host}          PCIe correctable AER errors
-#   hw_gpu_pcie_nonfatal_total{gpu,host}             PCIe non-fatal AER errors
-#   hw_gpu_pcie_fatal_total{gpu,host}                PCIe fatal AER errors
 
 HOSTNAME_SHORT="${1:?Usage: gpu_metrics_plugin.sh <hostname>}"
 
@@ -49,6 +60,8 @@ def read_int(path):
 # Each amdgpu device exposes a hwmon directory with temperature, power,
 # and clock files.  We sort by PCI bus address to assign GPU indices 0..N
 # matching the order ROCm uses.
+# On NVIDIA systems this returns an empty list and the NVIDIA path below
+# takes over (nvidia-smi subprocess).
 
 def discover_amd_gpus():
     """Return list of (gpu_index, hwmon_path) sorted by PCI bus address."""
@@ -91,11 +104,14 @@ add('# HELP hw_gpu_vram_used_bytes GPU VRAM currently used in bytes.')
 add('# TYPE hw_gpu_vram_used_bytes gauge')
 add('# HELP hw_gpu_vram_total_bytes GPU VRAM total capacity in bytes.')
 add('# TYPE hw_gpu_vram_total_bytes gauge')
-# NOTE: GPU utilization is NOT collected here because the sysfs
-# gpu_busy_percent / mem_busy_percent files return 0 on MI355 OAM
-# with current ROCm drivers.  Use ray_node_gpus_utilization from
-# Ray's Prometheus exporter (RAY_METRICS_PORT, default 55080)
-# instead — it provides per-GPU utilization with a GpuIndex label.
+add('# HELP hw_gpu_utilization_pct GPU compute utilization percentage.')
+add('# TYPE hw_gpu_utilization_pct gauge')
+add('# HELP hw_gpu_ras_ecc_ce_total GPU correctable ECC errors (NVIDIA).')
+add('# TYPE hw_gpu_ras_ecc_ce_total counter')
+add('# HELP hw_gpu_ras_ecc_ue_total GPU uncorrectable ECC errors (NVIDIA).')
+add('# TYPE hw_gpu_ras_ecc_ue_total counter')
+# NOTE: AMD sysfs gpu_busy_percent returns 0 on MI355 OAM with current
+# ROCm drivers; on NVIDIA, utilization is collected via nvidia-smi above.
 
 amd_gpus = discover_amd_gpus()
 
@@ -135,13 +151,84 @@ if amd_gpus:
             add(f'hw_gpu_vram_total_bytes{{{lb}}} {vram_total}')
 
 else:
-    print('[gpu_plugin] No amdgpu hwmon devices found in /sys/class/hwmon',
-          file=sys.stderr)
+    # =====================================================================
+    # Discover NVIDIA GPUs via nvidia-smi (fallback when no AMD GPUs found)
+    # =====================================================================
+    nvidia_gpus = []
+    try:
+        import subprocess as _sp
+        _nv = _sp.run(
+            ['nvidia-smi',
+             '--query-gpu=index,temperature.gpu,power.draw,clocks.sm,clocks.mem,'
+             'memory.used,memory.total,utilization.gpu,'
+             'ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total',
+             '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=10
+        )
+        if _nv.returncode == 0 and _nv.stdout.strip():
+            for _line in _nv.stdout.strip().splitlines():
+                parts = [p.strip() for p in _line.split(',')]
+                if len(parts) < 8:
+                    continue
+                gpu_id = parts[0]
+                nvidia_gpus.append(gpu_id)
+                lb = f'gpu="{gpu_id}",host="{hostname}"'
+
+                def _safe_float(s):
+                    try:
+                        return float(s) if s not in ('[N/A]', 'N/A', '[Not Supported]', '') else None
+                    except ValueError:
+                        return None
+
+                temp = _safe_float(parts[1])
+                if temp is not None:
+                    add(f'hw_gpu_temperature_celsius{{{lb}}} {temp:.1f}')
+
+                power = _safe_float(parts[2])
+                if power is not None:
+                    add(f'hw_gpu_power_watts{{{lb}}} {power:.1f}')
+
+                sclk = _safe_float(parts[3])
+                if sclk is not None:
+                    add(f'hw_gpu_clock_mhz{{{lb},type="sclk"}} {int(sclk)}')
+                mclk = _safe_float(parts[4])
+                if mclk is not None:
+                    add(f'hw_gpu_clock_mhz{{{lb},type="mclk"}} {int(mclk)}')
+
+                # nvidia-smi reports memory in MiB
+                vram_used = _safe_float(parts[5])
+                if vram_used is not None:
+                    add(f'hw_gpu_vram_used_bytes{{{lb}}} {int(vram_used * 1048576)}')
+                vram_total = _safe_float(parts[6])
+                if vram_total is not None:
+                    add(f'hw_gpu_vram_total_bytes{{{lb}}} {int(vram_total * 1048576)}')
+
+                util = _safe_float(parts[7])
+                if util is not None:
+                    add(f'hw_gpu_utilization_pct{{{lb}}} {int(util)}')
+
+                if len(parts) >= 10:
+                    ecc_ce = _safe_float(parts[8])
+                    if ecc_ce is not None:
+                        add(f'hw_gpu_ras_ecc_ce_total{{{lb}}} {int(ecc_ce)}')
+                    ecc_ue = _safe_float(parts[9])
+                    if ecc_ue is not None:
+                        add(f'hw_gpu_ras_ecc_ue_total{{{lb}}} {int(ecc_ue)}')
+
+    except FileNotFoundError:
+        pass  # nvidia-smi not available
+    except Exception as e:
+        print(f'[gpu_plugin] nvidia-smi: {e}', file=sys.stderr)
+
+    if not nvidia_gpus:
+        print('[gpu_plugin] No AMD or NVIDIA GPUs found', file=sys.stderr)
 
 # =========================================================================
-# GPU RAS error counters  (sysfs — always on, zero overhead)
+# GPU RAS error counters  (sysfs — AMD only, zero overhead)
 # =========================================================================
-# The amdgpu driver exposes per-block RAS counters via sysfs:
+# The amdgpu driver exposes per-block RAS counters via sysfs.
+# NVIDIA ECC errors are already collected above via nvidia-smi.
+# These AMD-specific RAS blocks provide finer granularity:
 #   aca_umc        — HBM memory ECC  (equivalent to check_ecc.sh / rocm-smi)
 #   aca_xgmi_wafl  — XGMI/WAFL inter-GPU link errors
 #   aca_gfx        — Compute engine (shader) errors
@@ -233,27 +320,46 @@ def parse_aer_total(path, prefix='TOTAL_ERR'):
         pass
     return None
 
+# Scan both AMD and NVIDIA PCI drivers for AER counters.
+# pci_to_gpu is populated by discover_amd_gpus() above; for NVIDIA we build
+# a separate mapping from the nvidia PCI driver directory.
+_nv_pci_to_gpu = {}
 try:
-    for dev in sorted(Path('/sys/bus/pci/drivers/amdgpu').iterdir()):
-        if not dev.name.startswith('0000:'):
-            continue
-        gpu_id = pci_to_gpu.get(dev.name)
-        if gpu_id is None:
-            continue
-        lb = f'gpu="{gpu_id}",host="{hostname}"'
+    nv_driver = Path('/sys/bus/pci/drivers/nvidia')
+    if nv_driver.exists():
+        for idx, dev in enumerate(sorted(
+                d for d in nv_driver.iterdir() if d.name.startswith('0000:'))):
+            _nv_pci_to_gpu[dev.name] = idx
+except Exception:
+    pass
 
-        for sysfs_name, metric, prefix in [
-            ('aer_dev_correctable', 'hw_gpu_pcie_correctable_total', 'TOTAL_ERR_COR'),
-            ('aer_dev_nonfatal',    'hw_gpu_pcie_nonfatal_total',    'TOTAL_ERR_NONFATAL'),
-            ('aer_dev_fatal',       'hw_gpu_pcie_fatal_total',       'TOTAL_ERR_FATAL'),
-        ]:
-            aer_file = dev / sysfs_name
-            if aer_file.exists():
-                val = parse_aer_total(str(aer_file), prefix)
-                if val is not None:
-                    add(f'{metric}{{{lb}}} {val}')
-except Exception as e:
-    print(f'[gpu_plugin] PCIe AER: {e}', file=sys.stderr)
+for driver_path, pci_map in [
+    (Path('/sys/bus/pci/drivers/amdgpu'), pci_to_gpu),
+    (Path('/sys/bus/pci/drivers/nvidia'), _nv_pci_to_gpu),
+]:
+    if not driver_path.exists():
+        continue
+    try:
+        for dev in sorted(driver_path.iterdir()):
+            if not dev.name.startswith('0000:'):
+                continue
+            gpu_id = pci_map.get(dev.name)
+            if gpu_id is None:
+                continue
+            lb = f'gpu="{gpu_id}",host="{hostname}"'
+
+            for sysfs_name, metric, prefix in [
+                ('aer_dev_correctable', 'hw_gpu_pcie_correctable_total', 'TOTAL_ERR_COR'),
+                ('aer_dev_nonfatal',    'hw_gpu_pcie_nonfatal_total',    'TOTAL_ERR_NONFATAL'),
+                ('aer_dev_fatal',       'hw_gpu_pcie_fatal_total',       'TOTAL_ERR_FATAL'),
+            ]:
+                aer_file = dev / sysfs_name
+                if aer_file.exists():
+                    val = parse_aer_total(str(aer_file), prefix)
+                    if val is not None:
+                        add(f'{metric}{{{lb}}} {val}')
+    except Exception as e:
+        print(f'[gpu_plugin] PCIe AER ({driver_path.name}): {e}', file=sys.stderr)
 
 # Output
 print('\n'.join(lines))

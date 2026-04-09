@@ -1,10 +1,35 @@
 #!/bin/bash
 
 # Training environment configuration.
-# Edit this file to tune XLA, NCCL, ROCm, and other runtime settings.
+#
+# Execution order:
+#   1. Vendor-specific env (train_env.amd.sh / train_env.nvidia.sh)
+#      — sets base XLA_FLAGS and vendor-specific vars (HIP/HSA, NVTE, etc.)
+#      — AMD: base XLA_FLAGS come from the Docker image, .amd.sh adds non-XLA vars
+#      — NVIDIA: .nvidia.sh explicitly sets base XLA_FLAGS to match AMD image defaults
+#   2. Common additions below (appended on top of vendor base)
 #
 # Sourced by _train.sh before launching training.
 # Per-run overrides: pass _env_KEY=VALUE after -- in submit.sh.
+
+_TRAIN_ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ============================================================================
+# Vendor-specific environment (auto-detected) — MUST run first to set base XLA_FLAGS
+# ============================================================================
+if [[ -e /dev/kfd ]]; then
+    echo "[train_env] GPU vendor: AMD (detected /dev/kfd)"
+    source "$_TRAIN_ENV_DIR/train_env.amd.sh"
+elif command -v nvidia-smi &>/dev/null; then
+    echo "[train_env] GPU vendor: NVIDIA (detected nvidia-smi)"
+    source "$_TRAIN_ENV_DIR/train_env.nvidia.sh"
+else
+    echo "[train_env] WARNING: No GPU vendor detected — no vendor-specific env loaded"
+fi
+
+# ============================================================================
+# Common XLA_FLAGS additions
+# ============================================================================
 
 # NOTE: the entire build logic is commented out
 #       to use the Docker image's default XLA_FLAGS!
@@ -59,9 +84,11 @@ fi
 XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_gpu_enable_command_buffer=''"
 export XLA_FLAGS
 
+# ============================================================================
+# Common NCCL / runtime settings
+# ============================================================================
 export NCCL_CHECKS_DISABLE=1
 export NCCL_DEBUG=WARN
-#export RCCL_KERNEL_COLL_TRACE_ENABLE=1  # For debugging if needed
 export TF_CPP_MIN_LOG_LEVEL=2
 
 # ---- Memory fraction ----
@@ -81,9 +108,7 @@ export NCCL_IB_QPS_PER_CONNECTION=4
 #export NCCL_IB_TIMEOUT=23
 
 # ---- Auto-detected NCCL network settings (IB HCA, QoS, socket interface) ----
-_TRAIN_ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_TRAIN_ENV_DIR/utils/detect_nccl_env.sh"
-unset _TRAIN_ENV_DIR
 
 # ---- Protocol and algorithm selection ----
 #export NCCL_ALGO=Ring,Tree  # Hybrid algorithm selection
@@ -96,34 +121,6 @@ unset _TRAIN_ENV_DIR
 
 # ---- GPU compute settings ----
 export CUDA_DEVICE_MAX_CONNECTIONS=1
-export GPU_MAX_HW_QUEUES=2
-
-# ---- AMD-specific optimizations ----
-export HIP_FORCE_DEV_KERNARG=1
-export HSA_ENABLE_IPC_MODE_LEGACY=1
-export HSA_FORCE_FINE_GRAIN_PCIE=1
-export HSA_NO_SCRATCH_RECLAIM=1
-
-# ---- Transformer Engine optimizations ----
-export NVTE_CK_USES_BWD_V3=1
-export NVTE_CK_USES_FWD_V3=1
-export NVTE_FRAMEWORK=jax
-export NVTE_FUSED_ATTN=1
-export NVTE_FUSED_ATTN_AOTRITON=0
-export NVTE_FUSED_ATTN_CK=1
-export NVTE_USE_CAST_TRANSPOSE_TRITON=0
-export NVTE_USE_HIPBLASLT=1
-export NVTE_USE_ROCM=1
-
-# ---- Composable Kernel optimizations ----
-export CK_TILE_FLOAT_TO_BFLOAT16_DEFAULT=2
-export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
-export NVTE_CK_HOW_V3_BF16_CVT=2
-# Forces FP32 precision for atomic accumulation in CK V3 GEMM output writes.
-# Critical for MoE convergence: BF16 atomics (=0) cause visibly slower loss
-# descent vs FP32 atomics (=1) due to accumulated rounding errors across many
-# experts and layers. Use default value from the docker image (likely =1).
-#export NVTE_CK_IS_V3_ATOMIC_FP32=1
 
 # ---- Compilation cache settings ----
 #export JAX_COMPILATION_CACHE_DIR="$OUTPUT_PATH/../jax_cache"
@@ -133,8 +130,6 @@ export NVTE_CK_HOW_V3_BF16_CVT=2
 #export JAX_ENABLE_PGLE=true
 #export JAX_PGLE_AGGREGATION_PERCENTILE=90
 #export JAX_PGLE_PROFILING_RUNS=5
-
-export IONIC_LOCKFREE=all
 
 # DMABUF default: enabled for performance, with runtime safety fallback below.
 # If /boot kernel metadata is unavailable in the container, this file
@@ -154,26 +149,9 @@ if [[ "${NCCL_DMABUF_ENABLE:-}" == "1" ]]; then
     fi
 fi
 
-export NCCL_GDRCOPY_ENABLE=1
-export NCCL_GDR_FLUSH_DISABLE=1
-export NCCL_IB_ECE_ENABLE=0
-# NOTE: NCCL_IB_TC and NCCL_IB_FIFO_TC are auto-detected above (see utils/detect_nccl_env.sh).
-export NCCL_IB_GID_INDEX=1
+# ---- Common NCCL IB settings ----
 export NCCL_IB_PCI_RELAXED_ORDERING=1
-export NCCL_IB_USE_INLINE=1
 export NCCL_IGNORE_CPU_AFFINITY=1
 export NCCL_PXN_DISABLE=0
-export NET_OPTIONAL_RECV_COMPLETION=1
-export RCCL_GDR_FLUSH_GPU_MEM_NO_RELAXED_ORDERING=0
-export RCCL_LL128_FORCE_ENABLE=1
-export RCCL_MSCCLPP_ENABLE=1
 
-#export HSA_DISABLE_CACHE=1
-#export IB_PCI_RELAXED_ORDERING=1
-#export NCCL_IB_QPS=2
-#export NCCL_IB_SL=0
-#export NCCL_IB_SPLIT_DATA_ON_QPS=0
-#export NCCL_NET_GDR_LEVEL=3
-#export NCCL_OOB_NET_IFNAME=enp81s0f1.2026
-#export NCCL_TOPO_DUMP_FILE=/tmp/system_run2.txt
-#export UCX_LOG_LEVEL=INFO
+unset _TRAIN_ENV_DIR

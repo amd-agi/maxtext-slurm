@@ -11,7 +11,6 @@
 # For private images, copy the template and fill in your credentials:
 #   cp container_env.local.template container_env.local.sh
 # container_env.local.sh is gitignored — credentials are never committed.
-DOCKER_REGISTRY="${DOCKER_REGISTRY:-docker.io}"
 if [[ -f "${BASH_SOURCE[0]%/*}/container_env.local.sh" ]]; then
     source "${BASH_SOURCE[0]%/*}/container_env.local.sh"
     echo "[INFO] Loaded registry credentials from container_env.local.sh"
@@ -19,9 +18,33 @@ fi
 # ── end Registry credentials ──────────────────────────────────────────────────
 
 # ── Docker image ──────────────────────────────────────────────────────────────
-DOCKER_IMAGE="${DOCKER_IMAGE:-rocm/jax-training:maxtext-v26.2}"
-DOCKER_IMAGE_HAS_AINIC="${DOCKER_IMAGE_HAS_AINIC:-true}"    # Set to false only if you know the image lacks AINIC
-MAXTEXT_REPO_DIR="${MAXTEXT_REPO_DIR:-/workspace/maxtext}"  # MaxText location inside the container
+# Auto-detect GPU vendor and set default registry, image, and paths.
+# Pull reference = $DOCKER_REGISTRY/$DOCKER_IMAGE (assembled in _container.sh).
+# Override: DOCKER_REGISTRY=nvcr.io DOCKER_IMAGE=nvidia/jax:tag ./submit.sh ...
+if [[ -z "${DOCKER_IMAGE:-}" ]]; then
+    if [[ -e /dev/kfd ]]; then
+        : "${DOCKER_REGISTRY:=docker.io}"
+        DOCKER_IMAGE="rocm/jax-training:maxtext-v26.2"
+        : "${DOCKER_IMAGE_HAS_AINIC:=true}"
+    else
+        : "${DOCKER_REGISTRY:=nvcr.io}"
+        DOCKER_IMAGE="nvidia/jax:26.03-maxtext-py3"
+        : "${DOCKER_IMAGE_HAS_AINIC:=false}"
+    fi
+else
+    : "${DOCKER_REGISTRY:=docker.io}"
+    : "${DOCKER_IMAGE_HAS_AINIC:=true}"
+fi
+# MaxText location inside the container (varies by image).
+# AMD (rocm/jax-training):    /workspace/maxtext
+# NVIDIA (nvcr.io/nvidia/jax): /opt/maxtext
+if [[ -z "${MAXTEXT_REPO_DIR:-}" ]]; then
+    if [[ -e /dev/kfd ]]; then
+        MAXTEXT_REPO_DIR="/workspace/maxtext"
+    else
+        MAXTEXT_REPO_DIR="/opt/maxtext"
+    fi
+fi
 MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH:-}"            # Global patch branch (empty = image default); per-model .env.sh can override
 # ── end Docker image ──────────────────────────────────────────────────────────
 

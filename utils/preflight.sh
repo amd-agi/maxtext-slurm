@@ -55,8 +55,12 @@ echo "$HOST | THP after  | enabled: $thp_enabled | defrag: $thp_defrag"
 _num_nodes="${NNODES:-1}"
 if [[ "$_num_nodes" -le 1 ]]; then
     echo "$HOST | [NETWORK_CHECKS] skipped (single-node job)"
+elif ! command -v nicctl &>/dev/null; then
+    # Pensando AINIC checks require nicctl; skip on non-Pensando clusters
+    # (e.g. NVIDIA DGX with Mellanox IB).
+    echo "$HOST | [NETWORK_CHECKS] skipped (not a Pensando AINIC cluster)"
 else
-    # ---- IPv6 routing rules check ----
+    # ---- IPv6 routing rules check (Pensando AINIC) ----
     # Each NIC needs an fd-prefix IPv6 policy routing rule.
     # Missing rules cause "ionic_comp_msn: cqe with error 12".
     # Skip on IPv4-only clusters.
@@ -71,7 +75,7 @@ else
         echo "$HOST | [CHECK_IPV6_RULES] OK ($_ipv6_fd_rules)"
     fi
 
-    # ---- DCQCN congestion control check ----
+    # ---- DCQCN congestion control check (Pensando AINIC) ----
     # DCQCN must be enabled on all NICs for congestion mitigation.
     EXPECTED_DCQCN_COUNT=${EXPECTED_DCQCN_COUNT:-8}
     _dcqcn_out=$(sudo nicctl show dcqcn 2>/dev/null) || true

@@ -79,19 +79,35 @@ if [[ "$PRINT_NODELIST" -eq 1 ]]; then
 fi
 
 # ---- ECC/UMC check ----
-# Prints only GPUs with UMC CE>0 or UE>0; prints NO_ROCM_SMI sentinel if missing.
+# Dual-path: AMD (rocm-smi) or NVIDIA (nvidia-smi).
+# Prints only GPUs with CE>0 or UE>0; prints NO_GPU_SMI sentinel if neither tool is found.
 check_cmd='
 set -o pipefail
-command -v rocm-smi >/dev/null 2>&1 || { echo "NO_ROCM_SMI"; exit 0; }
-
-rocm-smi --showrasinfo 2>/dev/null | awk "
-  /GPU\\[[0-9]+\\]:/ {gpu=\$0}
-  /^ *UMC/ {
-    ce=\$4; ue=\$5
-    if (ce !~ /^[0-9]+$/ || ue !~ /^[0-9]+$/) { ce=\$(NF-1); ue=\$NF }
-    if (ce+0>0 || ue+0>0) printf(\"%s UMC CE=%s UE=%s\\n\", gpu, ce, ue)
-  }
-"
+if command -v rocm-smi >/dev/null 2>&1; then
+    rocm-smi --showrasinfo 2>/dev/null | awk "
+      /GPU\\[[0-9]+\\]:/ {gpu=\$0}
+      /^ *UMC/ {
+        ce=\$4; ue=\$5
+        if (ce !~ /^[0-9]+$/ || ue !~ /^[0-9]+$/) { ce=\$(NF-1); ue=\$NF }
+        if (ce+0>0 || ue+0>0) printf(\"%s UMC CE=%s UE=%s\\n\", gpu, ce, ue)
+      }
+    "
+elif command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=index,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+        --format=csv,noheader 2>/dev/null | while IFS=, read -r idx ce ue; do
+        idx=$(echo "$idx" | xargs)
+        ce=$(echo "$ce" | xargs)
+        ue=$(echo "$ue" | xargs)
+        # nvidia-smi returns "N/A" when ECC is not supported or disabled
+        [[ "$ce" == "N/A" || "$ue" == "N/A" ]] && continue
+        if [[ "$ce" =~ ^[0-9]+$ && "$ue" =~ ^[0-9]+$ ]] && (( ce > 0 || ue > 0 )); then
+            echo "GPU[$idx] ECC CE=$ce UE=$ue"
+        fi
+    done
+else
+    echo "NO_GPU_SMI"
+    exit 0
+fi
 '
 
 run_local() {
@@ -122,12 +138,12 @@ for node in "${NODES[@]}"; do
   fi
 
   if [[ -z "$out" ]]; then
-    echo "${node}: OK (no ECC/UMC errors reported)"
+    echo "${node}: OK (no ECC errors reported)"
     continue
   fi
 
-  if [[ "$out" == "NO_ROCM_SMI" ]]; then
-    echo "${node}: rocm-smi not found"
+  if [[ "$out" == "NO_ROCM_SMI" || "$out" == "NO_GPU_SMI" ]]; then
+    echo "${node}: no GPU management tool found (rocm-smi / nvidia-smi)"
     continue
   fi
 

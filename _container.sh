@@ -302,15 +302,17 @@ if [[ "$DOCKER_IMAGE_HAS_AINIC" == "true" ]] || [[ "$MODE" == "interactive" ]]; 
 #        -e NCCL_NET_PLUGIN=librccl-anp.so
     )
 else
-    # Detect and configure host IB-related mounts (bnxt_re driver present on host)
-    if [[ -e "/etc/libibverbs.d/bnxt_re.driver" ]]; then
-        echo "Detected bnxt_re driver on host: enabling /etc/libibverbs.d mounts."
+    # Detect and configure host IB-related mounts (bnxt_re kernel module loaded).
+    # NOTE: /etc/libibverbs.d/bnxt_re.driver exists on all rdma-core installs
+    # regardless of hardware — check the actual kernel module instead.
+    if lsmod 2>/dev/null | grep -q bnxt_re; then
+        echo "Detected bnxt_re kernel module: enabling /etc/libibverbs.d mounts."
         IB_MOUNT_OPTIONS=(
             -v /etc/libibverbs.d:/etc/libibverbs.d:ro
             -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
         )
     else
-        echo "No /etc/libibverbs.d/bnxt_re.driver found: disabling IB mounts."
+        echo "No bnxt_re kernel module loaded: skipping host libibverbs mounts."
         IB_MOUNT_OPTIONS=()
     fi
 fi
