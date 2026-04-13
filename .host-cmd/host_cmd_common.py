@@ -34,7 +34,7 @@ def paths_for_host_cmd(host_cmd_dir: str | Path, node_id: str | None = None) -> 
         "node_id": nid,
         "queue_dir": base / "queue" / nid,
         "running_dir": base / "running" / nid,
-        "results_dir": base / "results",
+        "results_dir": base / "results" / nid,
         "pid_file": base / f"daemon.{nid}.pid",
         "lock_file": base / f"daemon.{nid}.lock",
         "log_file": base / f"host_cmd_server.{nid}.log",
