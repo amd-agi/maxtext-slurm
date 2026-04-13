@@ -11,11 +11,13 @@
 
 _DETECT_NCCL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# NCCL_IB_HCA: enumerate InfiniBand HCA devices
-if [[ -z "${NCCL_IB_HCA:-}" && -d /sys/class/infiniband ]]; then
-    NCCL_IB_HCA=$(ls /sys/class/infiniband 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-    [[ -n "$NCCL_IB_HCA" ]] && export NCCL_IB_HCA
-fi
+# NCCL_IB_HCA:
+# Leave unset by default and let NCCL auto-select usable HCAs. Blindly exporting
+# every device from /sys/class/infiniband can include disconnected rails or
+# fabrics that are not mutually reachable across nodes, which can trigger
+# NET/IB retry exhaustion during the first collective. Manual overrides (or
+# _env_NCCL_IB_HCA=...) still take precedence when a cluster needs an explicit
+# HCA allowlist.
 
 # NCCL_IB_TC / NCCL_IB_FIFO_TC: Pensando AINIC QoS auto-detection
 if [[ -z "${NCCL_IB_TC:-}" && -z "${NCCL_IB_FIFO_TC:-}" ]]; then

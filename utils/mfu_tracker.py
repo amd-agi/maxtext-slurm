@@ -306,6 +306,18 @@ def main():
         return
 
     setup(argv)
+
+    # absl.app.run() normally initialises absl logging; since we call
+    # maxtext_train.main() directly we must do it ourselves, otherwise all
+    # absl.logging.info() output (completed-step lines, memory stats, …)
+    # is silently dropped.
+    try:
+        from absl import logging as _absl_logging
+        _absl_logging.use_python_logging()
+        _absl_logging.set_verbosity(_absl_logging.INFO)
+    except ImportError:
+        pass
+
     from MaxText import train as maxtext_train
     maxtext_train.main(["maxtext_train"] + argv)
 

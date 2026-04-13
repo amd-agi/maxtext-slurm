@@ -214,8 +214,33 @@ DOCKER_BIN="$(get_docker_bin)" || exit 1
 read -ra DOCKER_CMD <<< "$DOCKER_BIN"
 echo "DOCKER_BIN=$DOCKER_BIN"
 
-# Resolve the image to run: either a local tarball or a registry image
+is_fully_qualified_image_ref() {
+    local image_ref="$1"
+    local first_component
+
+    [[ "$image_ref" == sha256:* || "$image_ref" == *@sha256:* ]] && return 0
+    [[ "$image_ref" == */* ]] || return 1
+
+    first_component="${image_ref%%/*}"
+    [[ "$first_component" == *.* || "$first_component" == *:* || "$first_component" == "localhost" ]]
+}
+
+resolve_pull_image_ref() {
+    local registry="$1"
+    local image_ref="$2"
+
+    if is_fully_qualified_image_ref "$image_ref" || [[ -z "$registry" ]]; then
+        printf '%s\n' "$image_ref"
+    else
+        printf '%s/%s\n' "$registry" "$image_ref"
+    fi
+}
+
+# Resolve the image to run: either a local tarball or a canonical registry image.
+# Keep the user-specified short name for local images, but switch to the fully
+# qualified pull ref when that's how the image exists locally.
 IMAGE_TO_RUN="$DOCKER_IMAGE"
+PULL_IMAGE_REF="$(resolve_pull_image_ref "$DOCKER_REGISTRY" "$DOCKER_IMAGE")"
 
 # Detect local tarball: absolute/relative path and file exists
 if [[ -f "$DOCKER_IMAGE" ]] && [[ "$DOCKER_IMAGE" == *.tar ]]; then
@@ -244,13 +269,20 @@ if [[ -f "$DOCKER_IMAGE" ]] && [[ "$DOCKER_IMAGE" == *.tar ]]; then
         fi
     fi
 else
-    # Not a local tarball; proceed with original inspect/pull logic on DOCKER_IMAGE
-    if ! "${DOCKER_CMD[@]}" image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
-        echo "[INFO] Image not found locally. Freeing up space and pulling $DOCKER_IMAGE ..."
+    # Not a local tarball; first try the user-specified ref, then the canonical
+    # pull ref in case a prior pull stored the image with its registry prefix.
+    if "${DOCKER_CMD[@]}" image inspect "$IMAGE_TO_RUN" >/dev/null 2>&1; then
+        echo "[INFO] Image already exists locally. Skipping pull of $IMAGE_TO_RUN ."
+    elif [[ "$PULL_IMAGE_REF" != "$IMAGE_TO_RUN" ]] && \
+         "${DOCKER_CMD[@]}" image inspect "$PULL_IMAGE_REF" >/dev/null 2>&1; then
+        IMAGE_TO_RUN="$PULL_IMAGE_REF"
+        echo "[INFO] Image already exists locally as $IMAGE_TO_RUN ."
+    else
+        echo "[INFO] Image not found locally. Freeing up space and pulling $PULL_IMAGE_REF ..."
         docker_smart_prune "$DOCKER_BIN" 120  # 120GB
 
         # Try anonymous pull first (works for public images).
-        if ! "${DOCKER_CMD[@]}" pull "$DOCKER_REGISTRY/$DOCKER_IMAGE" 2>/dev/null; then
+        if ! "${DOCKER_CMD[@]}" pull "$PULL_IMAGE_REF" 2>/dev/null; then
             # Anonymous pull failed — attempt authenticated pull
             # if credentials are configured.
             if [[ -n "${DOCKER_TOKEN:-}" && -n "${DOCKER_USERNAME:-}" ]]; then
@@ -260,20 +292,20 @@ else
                     echo "        in container_env.local.sh." >&2
                     exit 1
                 fi
-                if ! "${DOCKER_CMD[@]}" pull "$DOCKER_REGISTRY/$DOCKER_IMAGE"; then
-                    echo "[ERROR] Authenticated pull failed for $DOCKER_IMAGE." >&2
+                if ! "${DOCKER_CMD[@]}" pull "$PULL_IMAGE_REF"; then
+                    echo "[ERROR] Authenticated pull failed for $PULL_IMAGE_REF." >&2
                     echo "        Verify the image name in container_env.sh and" >&2
                     echo "        credentials in container_env.local.sh." >&2
                     exit 1
                 fi
             else
-                echo "[ERROR] Pull failed for $DOCKER_IMAGE." >&2
+                echo "[ERROR] Pull failed for $PULL_IMAGE_REF." >&2
                 echo "        For private images, run: $DOCKER_BIN login $DOCKER_REGISTRY" >&2
                 exit 1
             fi
         fi
-    else
-        echo "[INFO] Image already exists locally. Skipping pull of $DOCKER_IMAGE ."
+
+        IMAGE_TO_RUN="$PULL_IMAGE_REF"
     fi
 fi
 

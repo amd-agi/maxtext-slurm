@@ -27,8 +27,24 @@ export NVTE_FUSED_ATTN=1
 # ---- NVLink / NVSwitch (Blackwell and Hopper) ----
 # NVLS (NVLink SHARP) enables in-network reductions over NVSwitch.
 # Beneficial on DGX B200 / H100 systems with NVSwitch fabric.
-export NCCL_IB_SL=1
 #export NCCL_NVLS_ENABLE=1
+
+# ---- IB Service Level ----
+# NCCL_IB_SL sets the InfiniBand Service Level for QP traffic.
+# Only use SL>0 when the fabric's Subnet Manager has QoS / SL-to-VL
+# mapping configured (e.g. DGX-managed UFM clusters). On clusters
+# without QoS, SL>0 maps to unconfigured Virtual Lanes, causing
+# silent packet drops and IBV_WC_RETRY_EXC_ERR(12) on every rail.
+#export NCCL_IB_SL=1
+
+# ---- IB Partition Key fix ----
+# On fabrics where the default P_Key (index 0) is 0x7fff (limited member),
+# two limited-member endpoints cannot perform RDMA, causing
+# IBV_WC_RETRY_EXC_ERR(12). NCCL_IB_PKEY is broken in NCCL 2.29.7 on
+# native IB (it corrupts the GID selection via DOCA). Instead, use an
+# LD_PRELOAD shim that patches ibv_modify_qp to swap pkey_index 0 for
+# the first full-member index.
+source "${BASH_SOURCE[0]%/*}/utils/ib_pkey_fix.sh"
 
 # ---- NCCL tuning (NVIDIA-specific values) ----
 # Most NCCL IB settings are in the common section of train_env.sh.

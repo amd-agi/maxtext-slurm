@@ -10,5 +10,6 @@ For model config tasks (adding a model, creating .gpu.yml configs, parallelism, 
 For batch size sweeps (find optimal TGS, benchmark throughput, tune per_device_batch_size), follow the instructions in `skills/batch-sweep/SKILL.md`.
 For Docker container artifact checks (software versions, git hashes, source code inventory), follow the instructions in `skills/docker-artifact-check/SKILL.md`.
 For Telegram as I/O channel and REPL mode (notify me, send TG message, alert when done, wait for TG reply), follow the instructions in `skills/telegram/SKILL.md`.
+For InfiniBand P_Key debugging (IBV_WC_RETRY_EXC_ERR, ibv_modify_qp failures, GID index -1, IB RDMA errors), follow the instructions in `skills/ib-pkey-debug/SKILL.md`.
 
 **Multi-job performance comparisons** (e.g., "why is job B slower than job A?"): Start with `skills/tsdb-diagnosis/SKILL.md` (Multi-Job Comparison workflow) to check system-level metrics (process counts, network, I/O, GPU health) before running `skills/performance-analysis/SKILL.md`. TSDB surfaces root causes that TraceLens cannot see (CPU contention, RCCL resource leaks, network errors). Only fall back to TraceLens if the TSDB comparison is inconclusive.

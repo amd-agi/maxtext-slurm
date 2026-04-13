@@ -2,7 +2,6 @@
 base_config: "base.yml"
 run_name: "deepseek3-671b_train_test"
 hardware: "gpu"
-model_name: "deepseek3-671b"
 
 # ── Training ─────────────────────────────────────────────────────────────────
 steps: 15
@@ -10,7 +9,7 @@ steps: 15
 # ── Parallelism ──────────────────────────────────────────────────────────────
 # At most one DCN axis can be unspecified (-1)
 dcn_data_parallelism: -1 # auto-sharded
-dcn_fsdp_parallelism: 8
+dcn_fsdp_parallelism: 4
 dcn_sequence_parallelism: 1 # never recommended
 dcn_context_parallelism: 1
 dcn_tensor_parallelism: 1 # never recommended
@@ -38,6 +37,7 @@ use_iota_embed: True
 scan_layers: True
 logits_dot_in_fp32: False
 shardy: false
+# optimizer_memory_host_offload: True
 
 # ── Dtypes ────────────────────────────────────────────────────────────────────
 dtype: bfloat16
@@ -47,6 +47,7 @@ weight_dtype: bfloat16
 megablox: False
 sparse_matmul: False
 capacity_factor: 1.25
+# shard_exp_on_fsdp: True
 
 # ── Profiler ─────────────────────────────────────────────────────────────────
 profiler: "" #"xplane"

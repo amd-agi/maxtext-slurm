@@ -18,6 +18,113 @@
 # This ensures all nodes in a multi-node job select the same interface name,
 # which is critical for NCCL/RCCL to establish consistent connections.
 
+_nccl_list_candidates_with_python() {
+  python3 - <<'PY' 2>/dev/null || true
+import fcntl
+import os
+import socket
+import struct
+
+SIOCGIFADDR = 0x8915
+SIOCGIFNETMASK = 0x891b
+
+
+def query_ipv4(ifname):
+    packed = struct.pack("256s", ifname[:15].encode())
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            addr = fcntl.ioctl(sock.fileno(), SIOCGIFADDR, packed)
+            mask = fcntl.ioctl(sock.fileno(), SIOCGIFNETMASK, packed)
+    except OSError:
+        return None
+
+    ip = socket.inet_ntoa(addr[20:24])
+    if ip.startswith("127.") or ip.startswith("169.254."):
+        return None
+
+    netmask = socket.inet_ntoa(mask[20:24])
+    prefix = sum(bin(int(octet)).count("1") for octet in netmask.split("."))
+    return f"{ip}/{prefix}"
+
+
+for ifname in sorted(os.listdir("/sys/class/net")):
+    ipv4 = query_ipv4(ifname)
+    if ipv4:
+        print(f"{ifname} {ipv4}")
+PY
+}
+
+_nccl_collect_candidates() {
+  _NCCL_SOCKET_IFNAME_CANDIDATES=""
+  _NCCL_SOCKET_IFNAME_SOURCE=""
+
+  if command -v ip >/dev/null 2>&1; then
+    _NCCL_SOCKET_IFNAME_SOURCE="ip"
+    _NCCL_SOCKET_IFNAME_CANDIDATES="$(ip -o -4 addr show scope global 2>/dev/null | awk '{print $2, $4}' | sort -k1,1)"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    _NCCL_SOCKET_IFNAME_SOURCE="python"
+    if [[ "${_NCCL_SOCKET_IFNAME_FALLBACK_LOGGED:-0}" != "1" ]]; then
+      echo "[INFO] 'ip' command unavailable; using python3 fallback for NCCL socket interface detection" >&2
+      _NCCL_SOCKET_IFNAME_FALLBACK_LOGGED=1
+    fi
+    _NCCL_SOCKET_IFNAME_CANDIDATES="$(_nccl_list_candidates_with_python | sort -k1,1)"
+  fi
+}
+
+_nccl_dump_candidate_probe_debug() {
+  local source="$1"
+
+  if [[ "$source" == "ip" ]]; then
+    echo "[DEBUG] Output of 'ip -o -4 addr show scope global':" >&2
+    ip -o -4 addr show scope global 2>&1 | sed 's/^/  /' >&2
+    return 0
+  fi
+
+  if [[ "$source" == "python" ]]; then
+    echo "[DEBUG] Python fallback interface enumeration:" >&2
+    python3 - <<'PY' 2>&1 | sed 's/^/  /' >&2
+import fcntl
+import os
+import socket
+import struct
+
+SIOCGIFADDR = 0x8915
+SIOCGIFNETMASK = 0x891b
+
+
+def describe_ipv4(ifname):
+    packed = struct.pack("256s", ifname[:15].encode())
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            addr = fcntl.ioctl(sock.fileno(), SIOCGIFADDR, packed)
+            mask = fcntl.ioctl(sock.fileno(), SIOCGIFNETMASK, packed)
+    except OSError as exc:
+        print(f"{ifname}: no IPv4 ({exc})")
+        return
+
+    ip = socket.inet_ntoa(addr[20:24])
+    netmask = socket.inet_ntoa(mask[20:24])
+    prefix = sum(bin(int(octet)).count("1") for octet in netmask.split("."))
+    if ip.startswith("127."):
+        print(f"{ifname}: {ip}/{prefix} (loopback)")
+    elif ip.startswith("169.254."):
+        print(f"{ifname}: {ip}/{prefix} (link-local)")
+    else:
+        print(f"{ifname}: {ip}/{prefix}")
+
+
+for ifname in sorted(os.listdir("/sys/class/net")):
+    describe_ipv4(ifname)
+PY
+    return 0
+  fi
+
+  echo "[DEBUG] Neither 'ip' nor python3 is available for interface detection." >&2
+}
+
 choose_nccl_socket_ifname() {
   # --- 1. Check if NCCL_SOCKET_IFNAME is already set reasonably -----------
   # If the environment already has a valid interface name, just use it.
@@ -70,8 +177,12 @@ choose_nccl_socket_ifname() {
   # Sort by interface name first for deterministic ordering across nodes.
   # This is critical: without sorting, 'ip' command output order can vary
   # between nodes or between reboots based on interface initialization order.
-  local candidates
-  candidates=$(ip -o -4 addr show scope global 2>/dev/null | awk '{print $2, $4}' | sort -k1,1)
+  local candidates=""
+  local candidate_source=""
+  _nccl_collect_candidates
+  candidates="$_NCCL_SOCKET_IFNAME_CANDIDATES"
+  candidate_source="$_NCCL_SOCKET_IFNAME_SOURCE"
+  unset _NCCL_SOCKET_IFNAME_CANDIDATES _NCCL_SOCKET_IFNAME_SOURCE
 
   # --- 3. Select interface by priority --------------------------------------
 
@@ -122,8 +233,7 @@ choose_nccl_socket_ifname() {
 
   if [[ -z "$candidates" ]]; then
     echo "[CAUSE] No global IPv4 interfaces found" >&2
-    echo "[DEBUG] Output of 'ip -o -4 addr show scope global':" >&2
-    ip -o -4 addr show scope global 2>&1 | sed 's/^/  /' >&2
+    _nccl_dump_candidate_probe_debug "$candidate_source"
   else
     echo "[DEBUG] Selection process for each interface:" >&2
     echo "" >&2
