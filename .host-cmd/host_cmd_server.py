@@ -30,13 +30,13 @@ from host_cmd_common import paths_for_host_cmd
 
 HOST_CMD_DIR = Path(__file__).resolve().parent
 SHARED_ROOT = HOST_CMD_DIR.parent
-RESULTS_DIR = HOST_CMD_DIR / "results"
 POLICY_FILE = HOST_CMD_DIR / "policy.json"
 POLICY_DEFAULT = HOST_CMD_DIR / "policy.json.default"
 
-# Filled in main() after node id is known (per-node queue / lock / pid / log).
+# Filled in main() after node id is known.
 QUEUE_DIR: Path
 RUNNING_DIR: Path
+RESULTS_DIR: Path
 PID_FILE: Path
 LOCK_FILE: Path
 
@@ -142,8 +142,7 @@ def check_policy(cmd: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 def _write_result(job_id: str, result: dict):
-    """Atomic write of result file, stamped with this server's node_id."""
-    result.setdefault("node_id", _node_id)
+    """Atomic write of result file."""
     tmp_result = RESULTS_DIR / f".{job_id}.tmp"
     result_file = RESULTS_DIR / f"{job_id}.json"
     tmp_result.write_text(json.dumps(result, indent=2))
@@ -370,7 +369,7 @@ def _is_in_container() -> bool:
 
 
 def main():
-    global QUEUE_DIR, RUNNING_DIR, PID_FILE, LOCK_FILE
+    global QUEUE_DIR, RUNNING_DIR, RESULTS_DIR, PID_FILE, LOCK_FILE
 
     parser = argparse.ArgumentParser(description="host-cmd server")
     parser.add_argument(
@@ -392,6 +391,7 @@ def main():
     paths = paths_for_host_cmd(HOST_CMD_DIR)
     QUEUE_DIR = paths["queue_dir"]
     RUNNING_DIR = paths["running_dir"]
+    RESULTS_DIR = paths["results_dir"]
     PID_FILE = paths["pid_file"]
     LOCK_FILE = paths["lock_file"]
     _init_logging(paths["log_file"])

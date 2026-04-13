@@ -101,18 +101,18 @@ have independent queues, locks, pid files, and logs. Results are shared.
                   shared directory (.host-cmd/)
                  +--------------------------------------+
 Container A ---> |                                      |
-Container B ---> |  queue/<node-id>/*.cmd  -------->    | ---> host_cmd_server.py
-Container C ---> |  results/*.json         <--------    |      (one per node)
+Container B ---> |  queue/<node-id>/*.cmd    -------->  | ---> host_cmd_server.py
+Container C ---> |  results/<node-id>/*.json <--------  |      (one per node)
                  +--------------------------------------+
 ```
 
 Per-node files:
-- `queue/<node-id>/` — job queue (one per node)
+- `queue/<node-id>/` — job queue
 - `running/<node-id>/` — in-flight jobs
+- `results/<node-id>/` — command results
 - `daemon.<node-id>.pid` — server PID
 - `daemon.<node-id>.lock` — singleton lock
 - `host_cmd_server.<node-id>.log` — server log
 
 Shared files:
-- `results/` — command results (all nodes write here, keyed by UUID)
 - `policy.json` — command allow/deny rules

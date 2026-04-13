@@ -57,10 +57,11 @@ class HostBridge:
     # Ping
     # ------------------------------------------------------------------
 
-    def _ping_via(self, queue_dir: Path, timeout: float = 3.0) -> bool:
-        """Send a ping through a specific queue dir and wait for a pong."""
+    def _ping_via(self, queue_dir: Path, results_dir: Path,
+                  timeout: float = 3.0) -> bool:
+        """Send a ping through a specific queue/results pair."""
         queue_dir.mkdir(parents=True, exist_ok=True)
-        self.results_dir.mkdir(parents=True, exist_ok=True)
+        results_dir.mkdir(parents=True, exist_ok=True)
 
         job_id = uuid.uuid4().hex
         job_file = queue_dir / f"{job_id}.cmd"
@@ -71,7 +72,7 @@ class HostBridge:
             "submitted_at": time.time(),
         }))
 
-        result_file = self.results_dir / f"{job_id}.json"
+        result_file = results_dir / f"{job_id}.json"
         deadline = time.time() + timeout
         while time.time() < deadline:
             if result_file.exists():
@@ -88,8 +89,8 @@ class HostBridge:
         return False
 
     def ping(self, timeout: float = 3.0) -> bool:
-        """Ping using the current queue_dir."""
-        return self._ping_via(self.queue_dir, timeout)
+        """Ping using the current queue_dir/results_dir."""
+        return self._ping_via(self.queue_dir, self.results_dir, timeout)
 
     def _require_server(self):
         """Ping the server before every command.
@@ -97,18 +98,24 @@ class HostBridge:
         Tries the per-node queue and the legacy flat queue/ in order of
         likelihood: if a per-node pid file exists, per-node first; otherwise
         legacy first (avoids a 3s timeout penalty during migration).
+        All three dirs (queue, results, running) are switched together.
         """
         legacy_queue = self.dir / "queue"
-        queues = [self.queue_dir]
+        legacy_results = self.dir / "results"
+        legacy_running = self.dir / "running"
+        candidates = [(self.queue_dir, self.results_dir, self.running_dir)]
         if legacy_queue != self.queue_dir:
+            legacy = (legacy_queue, legacy_results, legacy_running)
             if self.pid_file.exists():
-                queues.append(legacy_queue)
+                candidates.append(legacy)
             else:
-                queues.insert(0, legacy_queue)
+                candidates.insert(0, legacy)
 
-        for q in queues:
-            if self._ping_via(q):
+        for q, r, rn in candidates:
+            if self._ping_via(q, r):
                 self.queue_dir = q
+                self.results_dir = r
+                self.running_dir = rn
                 return
 
         raise ServerNotRunningError(
@@ -268,35 +275,34 @@ class HostBridge:
     def cleanup(
         self,
         max_age_hours: float | None = None,
-        node_id: str | None = "self",
+        all_nodes: bool = False,
     ) -> int:
         """Delete result files.
 
-        node_id controls scope:
-            "self" (default) — only results tagged with this bridge's node_id
-            None             — all results (cluster-wide)
-            "<name>"         — results tagged with that specific node
-        Results without a node_id tag (from old servers) are only removed when
-        node_id is None.
+        By default, deletes from this node's results/<node-id>/ only.
+        With all_nodes=True, deletes from every results/<*>/ subdirectory
+        plus the legacy flat results/ directory.
         """
-        removed = 0
-        if not self.results_dir.exists():
-            return 0
-        target = self.node_id if node_id == "self" else node_id
         cutoff = time.time() - (max_age_hours * 3600) if max_age_hours else None
-        for pattern in ("*.json", ".*.tmp"):
-            for f in self.results_dir.glob(pattern):
-                try:
-                    if cutoff is not None and f.stat().st_mtime >= cutoff:
-                        continue
-                    if target is not None and f.name.endswith(".json"):
-                        data = json.loads(f.read_text())
-                        if data.get("node_id") != target:
+        results_base = self.dir / "results"
+        if all_nodes:
+            dirs = [d for d in results_base.iterdir() if d.is_dir()] if results_base.exists() else []
+            dirs.append(results_base)
+        else:
+            dirs = [self.results_dir]
+        removed = 0
+        for d in dirs:
+            if not d.exists():
+                continue
+            for pattern in ("*.json", ".*.tmp"):
+                for f in d.glob(pattern):
+                    try:
+                        if cutoff is not None and f.stat().st_mtime >= cutoff:
                             continue
-                    f.unlink(missing_ok=True)
-                    removed += 1
-                except (OSError, json.JSONDecodeError):
-                    pass
+                        f.unlink(missing_ok=True)
+                        removed += 1
+                    except OSError:
+                        pass
         return removed
 
 
@@ -343,8 +349,7 @@ def main():
 
     if args.cleanup is not None:
         hours = args.cleanup if args.cleanup > 0 else None
-        scope = None if args.all_nodes else "self"
-        removed = br.cleanup(max_age_hours=hours, node_id=scope)
+        removed = br.cleanup(max_age_hours=hours, all_nodes=args.all_nodes)
         age_label = f"older than {hours}h" if hours else "all"
         scope_label = "all nodes" if args.all_nodes else f"node {br.node_id}"
         print(f"Removed {removed} result files ({age_label}, {scope_label})")
