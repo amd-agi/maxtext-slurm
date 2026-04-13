@@ -2,8 +2,10 @@
 """
 host-cmd client — run commands on the host from inside a container.
 
-No config needed. This script and the server share the same directory
-via a shared filesystem (e.g. NFS).
+Shares .host-cmd/ over NFS. Each physical node runs its own server; jobs go to
+queue/<node-id>/ where node-id matches the host (HOST_CMD_NODE or hostname).
+Inside Docker, set HOST_CMD_NODE to the same value as on the host (e.g. the
+Slurm node name) so the client targets the local node's queue.
 
 Usage as a CLI:
     python3 host_cmd.py "squeue"
@@ -30,6 +32,8 @@ import time
 import uuid
 from pathlib import Path
 
+from host_cmd_common import paths_for_host_cmd
+
 _SELF_DIR = Path(__file__).resolve().parent
 PING_COMMAND = "__ping__"
 
@@ -41,21 +45,25 @@ class ServerNotRunningError(RuntimeError):
 class HostBridge:
     def __init__(self, host_cmd_dir: str | Path | None = None):
         self.dir = Path(host_cmd_dir).resolve() if host_cmd_dir else _SELF_DIR
-        self.queue_dir = self.dir / "queue"
-        self.results_dir = self.dir / "results"
+        paths = paths_for_host_cmd(self.dir)
+        self.node_id = paths["node_id"]
+        self.queue_dir = paths["queue_dir"]
+        self.running_dir = paths["running_dir"]
+        self.results_dir = paths["results_dir"]
+        self.pid_file = paths["pid_file"]
         self.shared_root = self.dir.parent
 
     # ------------------------------------------------------------------
     # Ping
     # ------------------------------------------------------------------
 
-    def ping(self, timeout: float = 3.0) -> bool:
-        """Send a ping through the queue and wait for a pong."""
-        self.queue_dir.mkdir(parents=True, exist_ok=True)
+    def _ping_via(self, queue_dir: Path, timeout: float = 3.0) -> bool:
+        """Send a ping through a specific queue dir and wait for a pong."""
+        queue_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
         job_id = uuid.uuid4().hex
-        job_file = self.queue_dir / f"{job_id}.cmd"
+        job_file = queue_dir / f"{job_id}.cmd"
         job_file.write_text(json.dumps({
             "id": job_id,
             "command": PING_COMMAND,
@@ -79,14 +87,37 @@ class HostBridge:
         job_file.unlink(missing_ok=True)
         return False
 
+    def ping(self, timeout: float = 3.0) -> bool:
+        """Ping using the current queue_dir."""
+        return self._ping_via(self.queue_dir, timeout)
+
     def _require_server(self):
-        """Ping the server before every command."""
-        if not self.ping():
-            raise ServerNotRunningError(
-                "host-cmd server is not responding. "
-                "Start it on the host with:\n"
-                "  cd .host-cmd && ./host-cmd-ctl.sh start"
-            )
+        """Ping the server before every command.
+
+        Tries the per-node queue and the legacy flat queue/ in order of
+        likelihood: if a per-node pid file exists, per-node first; otherwise
+        legacy first (avoids a 3s timeout penalty during migration).
+        """
+        legacy_queue = self.dir / "queue"
+        queues = [self.queue_dir]
+        if legacy_queue != self.queue_dir:
+            if self.pid_file.exists():
+                queues.append(legacy_queue)
+            else:
+                queues.insert(0, legacy_queue)
+
+        for q in queues:
+            if self._ping_via(q):
+                self.queue_dir = q
+                return
+
+        raise ServerNotRunningError(
+            "host-cmd server is not responding for this node "
+            f"({self.node_id!r}). Start it on the host with:\n"
+            "  cd .host-cmd && ./host-cmd-ctl.sh start\n"
+            "Inside a container, set HOST_CMD_NODE to the physical hostname "
+            "(same value the host uses) so jobs reach this node's server."
+        )
 
     # ------------------------------------------------------------------
     # Core API
@@ -176,15 +207,16 @@ class HostBridge:
     def status(self) -> dict:
         """Check server status via ping."""
         alive = self.ping(timeout=3.0)
-        pid_file = self.dir / "daemon.pid"
         pending = list(self.queue_dir.glob("*.cmd")) if self.queue_dir.exists() else []
-        running_dir = self.dir / "running"
-        running = list(running_dir.glob("*.cmd")) if running_dir.exists() else []
+        running = (
+            list(self.running_dir.glob("*.cmd")) if self.running_dir.exists() else []
+        )
         completed = list(self.results_dir.glob("*.json")) if self.results_dir.exists() else []
         return {
             "dir": str(self.dir),
+            "node_id": self.node_id,
             "server_alive": alive,
-            "pid": pid_file.read_text().strip() if pid_file.exists() else None,
+            "pid": self.pid_file.read_text().strip() if self.pid_file.exists() else None,
             "pending": len(pending),
             "running": len(running),
             "completed": len(completed),
@@ -233,18 +265,37 @@ class HostBridge:
     # Cleanup
     # ------------------------------------------------------------------
 
-    def cleanup(self, max_age_hours: float | None = None):
+    def cleanup(
+        self,
+        max_age_hours: float | None = None,
+        node_id: str | None = "self",
+    ) -> int:
+        """Delete result files.
+
+        node_id controls scope:
+            "self" (default) — only results tagged with this bridge's node_id
+            None             — all results (cluster-wide)
+            "<name>"         — results tagged with that specific node
+        Results without a node_id tag (from old servers) are only removed when
+        node_id is None.
+        """
         removed = 0
         if not self.results_dir.exists():
             return 0
+        target = self.node_id if node_id == "self" else node_id
         cutoff = time.time() - (max_age_hours * 3600) if max_age_hours else None
         for pattern in ("*.json", ".*.tmp"):
             for f in self.results_dir.glob(pattern):
                 try:
-                    if cutoff is None or f.stat().st_mtime < cutoff:
-                        f.unlink(missing_ok=True)
-                        removed += 1
-                except OSError:
+                    if cutoff is not None and f.stat().st_mtime >= cutoff:
+                        continue
+                    if target is not None and f.name.endswith(".json"):
+                        data = json.loads(f.read_text())
+                        if data.get("node_id") != target:
+                            continue
+                    f.unlink(missing_ok=True)
+                    removed += 1
+                except (OSError, json.JSONDecodeError):
                     pass
         return removed
 
@@ -262,7 +313,9 @@ def main():
                         help="Ping the server and report liveness")
     parser.add_argument("--cleanup", nargs="?", type=float, const=0, default=None,
                         metavar="HOURS",
-                        help="Delete results older than HOURS (default: delete all)")
+                        help="Delete this node's results older than HOURS (default: all of this node's)")
+    parser.add_argument("--all-nodes", action="store_true",
+                        help="With --cleanup: delete results from all nodes")
     parser.add_argument("--policy", action="store_true",
                         help="Show current policy")
     parser.add_argument("--deny", metavar="PATTERN",
@@ -290,9 +343,11 @@ def main():
 
     if args.cleanup is not None:
         hours = args.cleanup if args.cleanup > 0 else None
-        removed = br.cleanup(max_age_hours=hours)
-        label = f"older than {hours}h" if hours else "all"
-        print(f"Removed {removed} result files ({label})")
+        scope = None if args.all_nodes else "self"
+        removed = br.cleanup(max_age_hours=hours, node_id=scope)
+        age_label = f"older than {hours}h" if hours else "all"
+        scope_label = "all nodes" if args.all_nodes else f"node {br.node_id}"
+        print(f"Removed {removed} result files ({age_label}, {scope_label})")
         return
 
     if args.deny:
@@ -340,6 +395,7 @@ def main():
             print(json.dumps(s, indent=2))
         else:
             alive_str = "ALIVE" if s["server_alive"] else "NOT RUNNING"
+            print(f"Node id: {s['node_id']}")
             print(f"Server: {alive_str}  (PID: {s['pid'] or '?'})")
             print(f"Pending: {s['pending']}  Running: {s['running']}  Completed: {s['completed']}")
         return
