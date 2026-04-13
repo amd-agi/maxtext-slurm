@@ -17,6 +17,10 @@ cd /path/to/.host-cmd
 ./host-cmd-ctl.sh start
 ```
 
+Each physical node runs its own server. The node is identified by
+`HOST_CMD_NODE` (if set) or the short hostname. Start the server on every
+node you want to reach from containers.
+
 ### 2. From the CONTAINER — run commands
 
 ```bash
@@ -34,18 +38,25 @@ result = br.run("hostname")
 print(result["stdout"])
 ```
 
+Inside containers, set `HOST_CMD_NODE` to the same value the host uses
+(e.g. the Slurm node name) so the client targets the correct node's queue.
+
 ## Server Management
 
 All commands run on the host via `host-cmd-ctl.sh`:
 
 ```bash
-./host-cmd-ctl.sh start       # start server
-./host-cmd-ctl.sh stop        # stop server
-./host-cmd-ctl.sh restart     # restart (e.g. after policy change)
-./host-cmd-ctl.sh status      # check if running
-./host-cmd-ctl.sh history     # list recent commands and exit codes
-./host-cmd-ctl.sh cleanup     # delete all result files
-./host-cmd-ctl.sh cleanup 24  # delete results older than 24 hours
+./host-cmd-ctl.sh start               # start server on this node
+./host-cmd-ctl.sh stop                # stop this node's server
+./host-cmd-ctl.sh restart             # restart (e.g. after policy change)
+./host-cmd-ctl.sh status              # check if running
+./host-cmd-ctl.sh node-id             # print this node's id
+./host-cmd-ctl.sh nodes               # list all known node servers
+./host-cmd-ctl.sh log                 # tail this node's server log
+./host-cmd-ctl.sh history             # list recent commands and exit codes
+./host-cmd-ctl.sh cleanup             # delete this node's result files
+./host-cmd-ctl.sh cleanup-all         # delete all nodes' result files
+./host-cmd-ctl.sh cleanup 24          # delete this node's results older than 24h
 ```
 
 ## Policy
@@ -81,15 +92,27 @@ explicitly matched commands will run, everything else is rejected.
 
 ## Architecture
 
-Multiple containers can share one server. Each command gets a unique ID,
-so there are no collisions. Different users with separate shared
-directories run their own independent servers.
+Each physical node runs its own server process. The node id comes from
+`HOST_CMD_NODE` (recommended for containers) or the short hostname.
+Multiple containers on the same node share one server. Different nodes
+have independent queues, locks, pid files, and logs. Results are shared.
 
 ```
                   shared directory (.host-cmd/)
-                 +---------------------------+
-Container A ---> |                           |
-Container B ---> |  queue/*.cmd  -------->   | ---> host_cmd_server.py
-Container C ---> |  results/*.json  <-----   |      (on the host)
-                 +---------------------------+
+                 +--------------------------------------+
+Container A ---> |                                      |
+Container B ---> |  queue/<node-id>/*.cmd  -------->    | ---> host_cmd_server.py
+Container C ---> |  results/*.json         <--------    |      (one per node)
+                 +--------------------------------------+
 ```
+
+Per-node files:
+- `queue/<node-id>/` — job queue (one per node)
+- `running/<node-id>/` — in-flight jobs
+- `daemon.<node-id>.pid` — server PID
+- `daemon.<node-id>.lock` — singleton lock
+- `host_cmd_server.<node-id>.log` — server log
+
+Shared files:
+- `results/` — command results (all nodes write here, keyed by UUID)
+- `policy.json` — command allow/deny rules

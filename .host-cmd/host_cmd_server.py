@@ -2,9 +2,10 @@
 """
 host-cmd server — runs on the HOST outside the container.
 
-Watches .host-cmd/queue/ for job files, executes commands on the host,
-writes results to .host-cmd/results/.  The directory where this script
-lives is the shared directory — no config needed.
+Watches .host-cmd/queue/<node-id>/ for job files, executes commands on the host,
+writes results to .host-cmd/results/. One server process per physical node
+(node id from HOST_CMD_NODE or hostname). Shared NFS is OK: each node has its
+own queue, lock, pid, and log file.
 
 Usage:
     python3 host_cmd_server.py                        # foreground
@@ -25,37 +26,47 @@ import sys
 import time
 from pathlib import Path
 
+from host_cmd_common import paths_for_host_cmd
+
 HOST_CMD_DIR = Path(__file__).resolve().parent
 SHARED_ROOT = HOST_CMD_DIR.parent
-QUEUE_DIR = HOST_CMD_DIR / "queue"
-RUNNING_DIR = HOST_CMD_DIR / "running"
 RESULTS_DIR = HOST_CMD_DIR / "results"
-PID_FILE = HOST_CMD_DIR / "daemon.pid"
-LOCK_FILE = HOST_CMD_DIR / "daemon.lock"
 POLICY_FILE = HOST_CMD_DIR / "policy.json"
 POLICY_DEFAULT = HOST_CMD_DIR / "policy.json.default"
 
+# Filled in main() after node id is known (per-node queue / lock / pid / log).
+QUEUE_DIR: Path
+RUNNING_DIR: Path
+PID_FILE: Path
+LOCK_FILE: Path
+
 LOG_FMT = "%(asctime)s [%(levelname)s] %(message)s"
-LOG_FILE = HOST_CMD_DIR / "host_cmd_server.log"
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 LOG_BACKUP_COUNT = 3
 
 _log = logging.getLogger("host-cmd")
 _log.setLevel(logging.INFO)
 _formatter = logging.Formatter(LOG_FMT)
-_file_handler = logging.handlers.RotatingFileHandler(
-    LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
-)
-_file_handler.setFormatter(_formatter)
-_log.addHandler(_file_handler)
-_console_handler = logging.StreamHandler()
-_console_handler.setFormatter(_formatter)
-_log.addHandler(_console_handler)
+
+
+def _init_logging(log_file: Path) -> None:
+    """Attach file + stderr handlers (call once from main after paths exist)."""
+    _log.handlers.clear()
+    fh = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT
+    )
+    fh.setFormatter(_formatter)
+    _log.addHandler(fh)
+    ch = logging.StreamHandler()
+    ch.setFormatter(_formatter)
+    _log.addHandler(ch)
 
 DEFAULT_TIMEOUT = 600
 MAX_CONCURRENT = 16
 PING_COMMAND = "__ping__"
 STALE_CMD_S = 60  # discard queued commands older than this
+
+_node_id: str = ""  # set in main()
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +142,8 @@ def check_policy(cmd: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 def _write_result(job_id: str, result: dict):
-    """Atomic write of result file."""
+    """Atomic write of result file, stamped with this server's node_id."""
+    result.setdefault("node_id", _node_id)
     tmp_result = RESULTS_DIR / f".{job_id}.tmp"
     result_file = RESULTS_DIR / f"{job_id}.json"
     tmp_result.write_text(json.dumps(result, indent=2))
@@ -310,7 +322,7 @@ async def poll_loop(interval: float):
 
 
 # ---------------------------------------------------------------------------
-# Singleton lock — one server per directory
+# Singleton lock — one server per node
 # ---------------------------------------------------------------------------
 
 _lock_fd = None
@@ -358,6 +370,8 @@ def _is_in_container() -> bool:
 
 
 def main():
+    global QUEUE_DIR, RUNNING_DIR, PID_FILE, LOCK_FILE
+
     parser = argparse.ArgumentParser(description="host-cmd server")
     parser.add_argument(
         "--poll-interval",
@@ -368,11 +382,23 @@ def main():
     args = parser.parse_args()
 
     if Path("/.dockerenv").exists() or _is_in_container():
-        _log.error(
-            "Refusing to start inside a container. "
-            "The server must run on the host. Exiting."
+        print(
+            "host-cmd: refusing to start inside a container "
+            "(server must run on the host).",
+            file=sys.stderr,
         )
         sys.exit(1)
+
+    paths = paths_for_host_cmd(HOST_CMD_DIR)
+    QUEUE_DIR = paths["queue_dir"]
+    RUNNING_DIR = paths["running_dir"]
+    PID_FILE = paths["pid_file"]
+    LOCK_FILE = paths["lock_file"]
+    _init_logging(paths["log_file"])
+
+    global _node_id
+    _node_id = paths["node_id"]
+    _log.info("Node id: %s (set HOST_CMD_NODE to override)", _node_id)
 
     for d in (QUEUE_DIR, RUNNING_DIR, RESULTS_DIR):
         d.mkdir(parents=True, exist_ok=True)
@@ -383,7 +409,7 @@ def main():
     if not acquire_lock():
         info = read_existing_server_info()
         _log.error(
-            "Another server is already running (%s). Exiting.\n"
+            "Another server is already running on this node (%s). Exiting.\n"
             "If the other server is dead, its lock will have been "
             "auto-released. If you see this after a crash, check "
             "with host-cmd-ctl.sh status or remove %s manually.",
