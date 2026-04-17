@@ -298,6 +298,35 @@ def _print_gpu_info():
             print(f"  {name:<8s}  bf16={bf16} TFLOP/s")
 
 
+def _maybe_preinit_jax_distributed():
+    """Initialize JAX distributed for 1-GPU-per-process mode.
+
+    The launcher (``_train.sh`` or ``_ray_actor.py``) fans out to one Python
+    subprocess per GPU when ``ONE_GPU_PER_PROCESS=true``, setting ``NPROCS``
+    / ``GLOBAL_RANK`` / ``LOCAL_RANK``. SLURM only sees node-level tasks,
+    so neither JAX's SLURM auto-detect nor MaxText's
+    ``initialize_jax_for_gpu`` can derive the 1-GPU/proc topology. We do
+    it here, before importing MaxText, then unset ``JAX_COORDINATOR_IP``
+    so MaxText's init becomes a no-op (its guard is
+    ``if JAX_COORDINATOR_IP is not None``).
+
+    In 1-node/proc mode (no ``NPROCS``), this is a no-op.
+    """
+    if os.environ.get("NPROCS") is None:
+        return
+
+    import jax  # local import: avoid cost in diagnostic mode
+    jax.distributed.initialize(
+        coordinator_address=f"{os.environ['JAX_COORDINATOR_IP']}:"
+                            f"{os.environ['JAX_COORDINATOR_PORT']}",
+        num_processes=int(os.environ["NPROCS"]),
+        process_id=int(os.environ["GLOBAL_RANK"]),
+        local_device_ids=[int(os.environ.get("LOCAL_RANK", "0"))],
+    )
+    # Prevent MaxText's initialize_jax_for_gpu from trying to re-init.
+    del os.environ["JAX_COORDINATOR_IP"]
+
+
 def main():
     """Run MaxText training with MFU tracking, or print GPU info if no args."""
     argv = sys.argv[1:]
@@ -305,6 +334,7 @@ def main():
         _print_gpu_info()
         return
 
+    _maybe_preinit_jax_distributed()  # no-op in 1-node/proc mode
     setup(argv)
     from MaxText import train as maxtext_train
     maxtext_train.main(["maxtext_train"] + argv)
