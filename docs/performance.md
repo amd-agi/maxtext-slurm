@@ -49,7 +49,7 @@ This appends the following XLA flags (configured in `train_env.sh`):
 | `--xla_dump_hlo_pipeline_re` | Regex filter for compiler passes (`(?i)gpu` captures GPU-specific passes) |
 | `--xla_dump_to` | Output directory for dump files |
 
-Dump files are written to `<OUTPUT_PATH>/xla_dump/`. Key files:
+Dump files are written to `<OUTPUT_PATH>/xla_dump/`. The dump is scoped to global rank 0 only, because SPMD produces identical HLO on every rank and concurrent writers would race on filenames (each process has its own XLA module counter that aligns across ranks). Key files:
 
 | File | Contents |
 |------|----------|

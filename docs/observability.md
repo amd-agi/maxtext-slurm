@@ -47,6 +47,10 @@ Then open `http://localhost:8265`, `http://localhost:6006`, or `http://localhost
 
 If a port is occupied locally (e.g., monitoring multiple jobs), change the first port number in `-L`. For example, `-L 18265:node001:8265` then access `http://localhost:18265`.
 
+### py-spy target selection in 1-GPU-per-process mode
+
+The Ray Dashboard's `py-spy dump / record` button profiles the training subprocess (not the Ray worker shell) via a wrapper that resolves the Ray worker PID to its child training process. In [1-GPU-per-process mode](job-submission.md#1-gpu-per-process-mode) each Ray actor has multiple training children (one per local GPU) — the wrapper picks **local rank 0** by default. To profile a different rank from the Dashboard, export `PYSPY_LOCAL_RANK=N` on the head node before invoking the button.
+
 ## Post-run diagnostics
 
 Prometheus metrics and Ray session logs are written to `JOB_WORKSPACE` and available after the job ends — no live job required:

@@ -345,6 +345,17 @@ RAY=1 submit.sh 70b -N 1 -- per_device_batch_size=2
 
 See [Observability](observability.md) for the full story: dashboards, SSH tunnel setup, post-run diagnostics, and debug commands.
 
+## 1-GPU-per-process mode
+
+By default each Slurm task runs a single Python process that claims all local GPUs (1-node-per-process). Some libraries need one Python process per GPU instead (e.g. IPC/xGMI-based expert-parallel dispatch kernels, or libraries that require `jax.local_device_count() == 1`). Enable the per-GPU launcher with `_env_ONE_GPU_PER_PROCESS=true`:
+
+```bash
+submit.sh 70b -N 8 -- _env_ONE_GPU_PER_PROCESS=true
+RAY=1 submit.sh 70b -N 8 -- _env_ONE_GPU_PER_PROCESS=true         # composes with Ray
+```
+
+When enabled, the container forks `LOCAL_WORLD_SIZE` Python subprocesses per node (one per local GPU). Each subprocess gets its own `LOCAL_RANK`, `GLOBAL_RANK`, and `NPROCS` env vars and calls `jax.distributed.initialize(..., local_device_ids=[LOCAL_RANK])` so exactly one GPU is visible to JAX. Slurm still only sees one task per node, so there is no change to the sbatch allocation.
+
 ---
 
 ## How artifacts work
