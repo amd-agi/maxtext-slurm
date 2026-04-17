@@ -298,7 +298,58 @@ def _print_gpu_info():
             print(f"  {name:<8s}  bf16={bf16} TFLOP/s")
 
 
-def _maybe_preinit_jax_distributed():
+def _parse_yaml_scalar(path, key):
+    """Return the scalar value of a top-level YAML ``key``, or None.
+
+    Line-based, comment-stripping, single-level (does not follow
+    ``base_config``). Sufficient for pre-MaxText-import config probing.
+    """
+    try:
+        with open(path) as f:
+            for line in f:
+                s = line.strip()
+                if not s or s[0] == "#" or ":" not in s:
+                    continue
+                k, _, v = s.partition(":")
+                if k.strip() == key:
+                    return v.split("#")[0].strip().strip("'\"")
+    except OSError:
+        pass
+    return None
+
+
+def _resolve_config_int(argv, key, default):
+    """Resolve an integer MaxText config value: CLI > model YAML > default.
+
+    Callers pass ``default`` equal to MaxText ``base.yml``'s own default
+    so this layer matches node-level-path behaviour when neither the CLI
+    nor the model YAML explicitly sets ``key``. We deliberately don't
+    read ``base.yml`` directly: its location depends on how MaxText is
+    installed/mounted and we'd rather not hard-code that path.
+    """
+    for arg in (argv or []):
+        if "=" in arg:
+            k, _, v = arg.partition("=")
+            if k.strip() == key:
+                try:
+                    return int(v.strip())
+                except ValueError:
+                    pass
+    for arg in (argv or []):
+        if arg.startswith("-") or "=" in arg:
+            continue
+        if os.path.isfile(arg):
+            raw = _parse_yaml_scalar(arg, key)
+            if raw is not None:
+                try:
+                    return int(raw)
+                except ValueError:
+                    pass
+            break
+    return default
+
+
+def _maybe_preinit_jax_distributed(argv=None):
     """Initialize JAX distributed for 1-GPU-per-process mode.
 
     The launcher (``_train.sh`` or ``_ray_actor.py``) fans out to one Python
@@ -310,18 +361,43 @@ def _maybe_preinit_jax_distributed():
     so MaxText's init becomes a no-op (its guard is
     ``if JAX_COORDINATOR_IP is not None``).
 
+    ``heartbeat_timeout_seconds`` and ``initialization_timeout`` use the
+    same MaxText config keys (``jax_distributed_heartbeat_timeout_seconds``
+    / ``jax_distributed_initialization_timeout``) as the node-level path
+    (``initialize_jax_for_gpu``), resolved as CLI > model YAML > default.
+    The defaults (100 s / 300 s) mirror MaxText's in-tree ``base.yml``
+    values at the time of writing, so 1-GPU/proc behaves the same as
+    the node-level launcher when the user doesn't override. Bump the
+    timeouts via CLI / YAML if you're running jobs that need larger
+    windows (see ``docs/jax-heartbeat-false-positive-postmortem.md``
+    §6.1).
+
     In 1-node/proc mode (no ``NPROCS``), this is a no-op.
     """
     if os.environ.get("NPROCS") is None:
         return
 
     import jax  # local import: avoid cost in diagnostic mode
+    heartbeat_timeout_s = _resolve_config_int(
+        argv, "jax_distributed_heartbeat_timeout_seconds", 100)
+    init_timeout_s = _resolve_config_int(
+        argv, "jax_distributed_initialization_timeout", 300)
     jax.distributed.initialize(
         coordinator_address=f"{os.environ['JAX_COORDINATOR_IP']}:"
                             f"{os.environ['JAX_COORDINATOR_PORT']}",
         num_processes=int(os.environ["NPROCS"]),
         process_id=int(os.environ["GLOBAL_RANK"]),
         local_device_ids=[int(os.environ.get("LOCAL_RANK", "0"))],
+        initialization_timeout=init_timeout_s,
+        heartbeat_timeout_seconds=heartbeat_timeout_s,
+    )
+    print(
+        f"[jax-preinit] nprocs={os.environ['NPROCS']} "
+        f"rank={os.environ['GLOBAL_RANK']} "
+        f"local_device={os.environ.get('LOCAL_RANK', '0')} "
+        f"heartbeat_timeout_s={heartbeat_timeout_s} "
+        f"init_timeout_s={init_timeout_s}",
+        flush=True,
     )
     # Prevent MaxText's initialize_jax_for_gpu from trying to re-init.
     del os.environ["JAX_COORDINATOR_IP"]
@@ -334,7 +410,7 @@ def main():
         _print_gpu_info()
         return
 
-    _maybe_preinit_jax_distributed()  # no-op in 1-node/proc mode
+    _maybe_preinit_jax_distributed(argv)  # no-op in 1-node/proc mode
     setup(argv)
     from MaxText import train as maxtext_train
     maxtext_train.main(["maxtext_train"] + argv)
