@@ -403,6 +403,91 @@ def _maybe_preinit_jax_distributed(argv=None):
     del os.environ["JAX_COORDINATOR_IP"]
 
 
+def _maybe_tag_profiler_output_with_local_rank():
+    """Eliminate the ``<host>.xplane.pb`` write race in 1-GPU/proc mode.
+
+    JAX's xplane profiler names its output files by libc ``gethostname(2)``
+    alone — ``<host>.xplane.pb``, ``<host>.trace.json.gz``, ``<host>.SSTABLE``.
+    Under the 1-GPU-per-process launcher, ``LOCAL_WORLD_SIZE`` processes share
+    a hostname and — when ``upload_all_profiler_results=true`` (default in the
+    shipped ``configs/*.gpu.yml``) — all call ``start_trace`` / ``stop_trace``
+    with the same ``log_dir``, racing on the same three filenames and
+    corrupting 7 of 8 on each host.
+
+    We serialize ``stop_trace`` (the call that actually invokes JAX's C++
+    writer) under a host-scoped ``flock`` and, while still holding the lock,
+    rename the just-written files to ``<host>.proc<LOCAL_RANK>.<ext>``.  Next
+    process enters the critical section, writes to a now-empty
+    ``<host>.<ext>`` (prior files were renamed), and tags its own output.
+    Because serialization spreads successive same-host writes across
+    wall-clock seconds, JAX creates a separate ``<ts>/`` dir for each, so one
+    job produces up to ``LOCAL_WORLD_SIZE`` timestamp dirs — each holding one
+    per-host file — which ``analyze_job.py`` already treats as
+    periodic-profiling windows.  Filenames still ``startswith("<host>.")`` so
+    the dispatcher's node-0 filter, ``merge_xplane_traces.py``'s extension
+    glob, and every other tool keep working.
+
+    No-op when ``LOCAL_WORLD_SIZE`` is 1 (1-node/proc launcher).
+    """
+    local_ws = int(os.environ.get("LOCAL_WORLD_SIZE", "1"))
+    if local_ws <= 1:
+        return
+
+    import fcntl  # local: unneeded in 1-node/proc mode
+    import pathlib
+    import socket
+    import jax  # local: avoid cost in diagnostic mode
+
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    hostname = socket.gethostname()
+    _orig_stop_trace = jax.profiler.stop_trace
+
+    def _serialized_stop_trace(*args, **kwargs):
+        # Pull log_dir from JAX's internal state (set by start_trace).
+        from jax._src import profiler as _jp  # pylint: disable=g-import-not-at-top
+        log_dir = pathlib.Path(str(_jp._profile_state.log_dir))
+
+        lock_path = f"/tmp/jax_profiler_{hostname}.lock"
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                _orig_stop_trace(*args, **kwargs)
+            finally:
+                # Tag this process's just-written files.  We hold the
+                # host-scoped flock, so any ``<host>.<ext>`` without a
+                # ``.proc<N>`` segment across the entire profile tree must
+                # be ours (earlier procs on this host already tagged theirs;
+                # later procs haven't entered the lock yet).  Scan every
+                # timestamp dir because serialization can push successive
+                # writes into different ts dirs when they span a second
+                # boundary, and dir mtimes are unreliable as "latest"
+                # hints (renames by other hosts' flocks on shared storage
+                # bump mtimes independently).
+                profile_root = log_dir / "plugins" / "profile"
+                prefix = hostname + "."
+                if profile_root.is_dir():
+                    for ts_dir in profile_root.iterdir():
+                        if not ts_dir.is_dir():
+                            continue
+                        for f in ts_dir.glob(f"{hostname}.*"):
+                            rest = f.name[len(prefix):]
+                            if rest.startswith("proc"):
+                                continue  # already tagged
+                            new = ts_dir / f"{hostname}.proc{local_rank}.{rest}"
+                            f.rename(new)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+    jax.profiler.stop_trace = _serialized_stop_trace
+    print(
+        f"[jax-profiler-shim] local_rank={local_rank} will tag its xplane "
+        f"output as {hostname}.proc{local_rank}.*",
+        flush=True,
+    )
+
+
 def main():
     """Run MaxText training with MFU tracking, or print GPU info if no args."""
     argv = sys.argv[1:]
@@ -411,6 +496,7 @@ def main():
         return
 
     _maybe_preinit_jax_distributed(argv)  # no-op in 1-node/proc mode
+    _maybe_tag_profiler_output_with_local_rank()  # no-op in 1-node/proc mode
     setup(argv)
     from MaxText import train as maxtext_train
     maxtext_train.main(["maxtext_train"] + argv)

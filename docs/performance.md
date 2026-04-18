@@ -28,6 +28,8 @@ profiler_steps: 1
 
 Trace files are written to `base_output_directory` (i.e. `OUTPUT_PATH`).
 
+**1-GPU-per-process mode.** The JAX xplane writer names output files by `socket.gethostname()` alone, so when multiple processes share a host (see [1-GPU-per-process mode](job-submission.md#1-gpu-per-process-mode)) they'd race on the same `<host>.xplane.pb`. `mfu_tracker.py` wraps `jax.profiler.stop_trace` with a host-scoped `flock` that serializes the write and tags each process's output as `<host>.proc<LOCAL_RANK>.xplane.pb` (with matching `.trace.json.gz` and `.SSTABLE`). Serialization makes successive writes from the same host land in different per-second timestamp directories, so one job ends up with `LOCAL_WORLD_SIZE` timestamp dirs of flat per-host files — `analyze_job.py` already treats multiple ts dirs as periodic-profiling windows and handles them transparently. Filenames still start with `<host>.`, so the node-0 filter, `merge_xplane_traces.py`, TraceLens, and IRLens keep working unchanged.
+
 ### HLO IR dump
 
 [XLA](https://openxla.org/)'s JIT compiler transforms JAX code into [HLO (High Level Operations)](https://openxla.org/xla/operation_semantics) IR before generating GPU kernels. HLO dumps capture the compiled computation graph — which collectives are fused, how loops are structured, and what kernels will execute each step — independent of actual execution timing.
@@ -64,7 +66,7 @@ Dump files are written to `<OUTPUT_PATH>/xla_dump/`. The dump is scoped to globa
 
 ### Visualize traces
 
-Open trace files in [Perfetto](https://ui.perfetto.dev/) (recommended for large files) or `chrome://tracing`. Multi-node jobs produce one trace file per node. Each can be viewed individually, or merged into one file for side-by-side viewing:
+Open trace files in [Perfetto](https://ui.perfetto.dev/) (recommended for large files) or `chrome://tracing`. Multi-node jobs produce one trace file per host by default, or `LOCAL_WORLD_SIZE` per host (one per local GPU, named `<host>.proc<N>.trace.json.gz`) in [1-GPU-per-process mode](job-submission.md#1-gpu-per-process-mode). Each can be viewed individually, or merged into one file for side-by-side viewing:
 
 ```bash
 utils/merge_xplane_traces.py "$JOB_WORKSPACE/<job>/"

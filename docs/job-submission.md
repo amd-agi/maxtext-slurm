@@ -356,6 +356,8 @@ RAY=1 submit.sh 70b -N 8 -- _env_ONE_GPU_PER_PROCESS=true         # composes wit
 
 When enabled, the container forks `LOCAL_WORLD_SIZE` Python subprocesses per node (one per local GPU). Each subprocess gets its own `LOCAL_RANK`, `GLOBAL_RANK`, and `NPROCS` env vars and calls `jax.distributed.initialize(..., local_device_ids=[LOCAL_RANK])` so exactly one GPU is visible to JAX. Slurm still only sees one task per node, so there is no change to the sbatch allocation.
 
+**Profiler scoping.** With `profiler=xplane` + `upload_all_profiler_results=true` (the shipped default in most `configs/*.gpu.yml`), each local rank would normally race on the same `<host>.xplane.pb` filename. `utils/mfu_tracker.py` serializes the `stop_trace` write per host and tags each process's output as `<host>.proc<LOCAL_RANK>.*`, preserving per-GPU straggler visibility. No user action required.
+
 ---
 
 ## How artifacts work
