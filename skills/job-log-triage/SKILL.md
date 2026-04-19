@@ -85,6 +85,7 @@ Scan the log for these signatures, in priority order (first match wins the prima
 
 | Class | Log signature(s) | Stage | What happened |
 |-------|------------------|-------|---------------|
+| **prolog-kill-no-log** | Empty `outputs/<id>-…/` dir with no `.log` sibling, OR user reports a `[ERROR] Job <id> died in prolog before writing any log` message from `submit.sh`, OR `sacct`/`squeue -t all` shows `FAILED` with `Reason=RaisedSignal:53(Real-time_signal_19)` and `RunTime=00:00:01`. Entry point is **not** the log file — scan `squeue -t all` / `sacct` instead, since the usual `outputs/` walk finds nothing. | Slurm prolog | slurmd killed the job before the batch script could run — usually because `--output` path exceeds ext4's 255-byte per-path-segment limit (long `JOB_NAME`), or a partition-level prolog script failed. `submit.sh` catches most of these pre-submit (length check in `parse_job_args.sh`) and the rest at t+3s (`squeue -t all` poll + cleanup). If this signature still appears on a fresh submit, the cause is partition-side — wait for the partition to recover, check slurmd logs on allocated nodes, or try a different partition. |
 | **container-pull-fail** | `[ERROR] Pull failed for`, `[ERROR] Authenticated pull failed`, `[ERROR] Login to ... failed` | Docker pull | Image pull or registry auth failed |
 | **container-load-fail** | `[ERROR] Unable to determine image name or ID from docker load output` | Docker pull | Tarball load failed |
 | **no-gpu** | `WARNING: No GPU devices detected` | Container start | No GPU devices visible |
