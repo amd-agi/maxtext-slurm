@@ -55,6 +55,22 @@ if [[ "${ENABLE_XLA_DUMP,,}" =~ ^(1|y|yes|true)$ ]]; then
     echo "[XLA dump] XLA_FLAGS=$XLA_FLAGS"
 fi
 
+# ---- Disable XLA's in-process one-shot ragged-all-to-all kernel (default OFF) ----
+# Controls --xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel.
+# Default 0 (kernel disabled) → we append --...=false, so XLA's ragged thunk falls
+# back to its kNccl lowering — the same runtime path 1-GPU/proc gets automatically.
+# For sparse MoE (sparse_matmul=true use_turbo_grouped_gemm=true) on 1-node/proc
+# this is a ~3x TGS speedup at equal HBM budget; verified no-op on dense configs,
+# on sparse-gmm-deepep, and on 1-GPU/proc.
+# Set _env_ENABLE_RAGGED_ONESHOT_KERNEL=1 to restore XLA's one-shot kernel (debug only).
+# Appends to XLA_FLAGS so the image's default tuning flags are preserved.
+ENABLE_RAGGED_ONESHOT_KERNEL="${ENABLE_RAGGED_ONESHOT_KERNEL:-${EXTRACTED_ENV_MAP[ENABLE_RAGGED_ONESHOT_KERNEL]:-0}}"
+if [[ "${ENABLE_RAGGED_ONESHOT_KERNEL,,}" =~ ^(0|n|no|false)$ ]]; then
+    echo "[ENABLE_RAGGED_ONESHOT_KERNEL=0] Disabling --xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel"
+    XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel=false"
+    export XLA_FLAGS
+fi
+
 # ---- Fix for JAX-0.8.2 ----
 XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_gpu_enable_command_buffer=''"
 export XLA_FLAGS
