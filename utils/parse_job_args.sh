@@ -24,3 +24,14 @@ if ! MODEL_NAME=$(resolve_model_name "$SCRIPT_DIR/configs" "$MODEL_NAME"); then
 fi
 
 JOB_NAME="JAX-${MODEL_NAME}${EXP_TAG:+-$EXP_TAG}"
+
+# Reject JOB_NAME whose '<id>-${JOB_NAME}.log' (Slurm --output) or
+# '<id>-${JOB_NAME}' (per-job directory) would exceed ext4's 255-byte
+# per-path-segment limit — otherwise slurmd kills the job in prolog
+# ("RaisedSignal:53") or mkdir fails mid-setup, both with no usable log.
+if (( ${#JOB_NAME} + 12 > 255 )); then  # 7-digit id + '-' + '.log' = 12
+    echo >&2 "[ERROR] JOB_NAME is ${#JOB_NAME}B; '<id>-\$JOB_NAME.log' would exceed 255B."
+    echo >&2 "        Shorten passthrough args (each KEY=VALUE gets encoded into EXP_TAG),"
+    echo >&2 "        or use 'model_name:alias[:exp_tag]' spec to pick a shorter alias."
+    exit 1
+fi

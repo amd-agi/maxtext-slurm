@@ -125,6 +125,19 @@ if [[ -n "$JOB_ID" ]]; then
 
     # Symlink to the job log (may dangle until Slurm starts the job).
     ln -snf "../$JOB_DIR.log" "$JOB_WORKSPACE/$JOB_DIR/log"
+
+    # Detect instant prolog kills (partition misconfig, node fault, admin
+    # scancel-on-arrival).  PENDING jobs pass through; delayed failures
+    # require caller-side polling.
+    sleep 3
+    _state=$(squeue -t all -h -j "$JOB_ID" -o '%T' 2>/dev/null || true)
+    if [[ "$_state" =~ ^(FAILED|CANCELLED|NODE_FAIL|BOOT_FAIL|TIMEOUT|OUT_OF_MEMORY|DEADLINE)$ ]]; then
+        echo >&2 "[ERROR] Job $JOB_ID died in prolog before writing any log: $_state"
+        # Clean up the orphaned job dir + artifact (mirrors the sbatch-failure
+        # path at line 103-108); nothing in them will ever be written to.
+        rm -rf "$JOB_WORKSPACE/$JOB_DIR" "$ARTIFACT_DIR"
+        exit 1
+    fi
 else
     echo "[ARTIFACT] WARNING: Could not parse job ID. Artifact at: $ARTIFACT_DIR"
 fi
