@@ -15,7 +15,7 @@ if [[ "${RAY:-0}" == "1" || "${RAY:-}" == "true" ]]; then
     USE_RAY=true
 fi
 
-if [[ "$DOCKER_IMAGE_HAS_AINIC" == "true" ]]; then
+if [[ "$USE_DOCKER_IMAGE_AINIC_DRIVER" == "true" ]]; then
     echo "AINIC-enabled image detected: $DOCKER_IMAGE"
 else
     echo "Standard image (no AINIC): $DOCKER_IMAGE"
@@ -296,21 +296,21 @@ CONTAINER_NAME="maxtext-slurm-${JOB_ID}-node${NODE_RANK}"
 "${DOCKER_CMD[@]}" rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
 # NOTE: All IB/ANP-related mount options go here!
-if [[ "$DOCKER_IMAGE_HAS_AINIC" == "true" ]] || [[ "$MODE" == "interactive" ]]; then
+if [[ "$USE_DOCKER_IMAGE_AINIC_DRIVER" == "true" ]] || [[ "$MODE" == "interactive" ]]; then
     IB_MOUNT_OPTIONS=(
         # NOTE: has no effect unless ANP is installed in the container
 #        -e NCCL_NET_PLUGIN=librccl-anp.so
     )
 else
-    # Detect and configure host IB-related mounts (bnxt_re driver present on host)
-    if [[ -e "/etc/libibverbs.d/bnxt_re.driver" ]]; then
-        echo "Detected bnxt_re driver on host: enabling /etc/libibverbs.d mounts."
+    # Detect and configure host IB-related mounts (bnxt_re or ionic driver present on host)
+    if [[ -e "/etc/libibverbs.d/bnxt_re.driver" ]] || [[ -e "/etc/libibverbs.d/ionic.driver" ]]; then
+        echo "Detected IB driver on host (bnxt_re/ionic): enabling /etc/libibverbs.d mounts."
         IB_MOUNT_OPTIONS=(
             -v /etc/libibverbs.d:/etc/libibverbs.d:ro
             -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
         )
     else
-        echo "No /etc/libibverbs.d/bnxt_re.driver found: disabling IB mounts."
+        echo "No /etc/libibverbs.d/bnxt_re.driver or ionic.driver found: disabling IB mounts."
         IB_MOUNT_OPTIONS=()
     fi
 fi
