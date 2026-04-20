@@ -188,7 +188,7 @@ Sourced by `_container.sh` before launching the container (and by `in_container_
 |----------|---------|---------|
 | `DOCKER_REGISTRY` | `docker.io` | Container registry for pulls |
 | `DOCKER_IMAGE` | `rocm/jax-training:maxtext-v26.1` | Docker image to run |
-| `DOCKER_IMAGE_HAS_AINIC` | `true` | Set to `false` only if you know the image lacks AINIC |
+| `USE_DOCKER_IMAGE_AINIC_DRIVER` | `true` | Use the container's built-in AINIC driver; set to `false` to bind-mount host IB libs instead (needed when container libionic1 mismatches host firmware) |
 | `MAXTEXT_REPO_DIR` | `/workspace/maxtext` | MaxText location inside the container |
 | `MAXTEXT_PATCH_BRANCH` | _(empty)_ | Global patch branch (empty = image default); per-model `.env.sh` can override |
 | `DATASET_DIR` | `/mnt/vast/datasets` | Host path to datasets (mounted read-only as `/datasets` inside the container) |
@@ -200,7 +200,7 @@ DOCKER_IMAGE=my/custom:tag ./run_local.sh 70b -- steps=10
 DOCKER_IMAGE=my/custom:tag ./submit.sh 70b -N 1
 
 # Override multiple settings at once
-DOCKER_IMAGE=my/custom:tag DOCKER_IMAGE_HAS_AINIC=false ./run_local.sh 70b -- steps=10
+DOCKER_IMAGE=my/custom:tag USE_DOCKER_IMAGE_AINIC_DRIVER=false ./run_local.sh 70b -- steps=10
 
 # Override the MaxText branch (works with all entry points)
 MAXTEXT_PATCH_BRANCH=my-hotfix ./submit.sh 70b -N 1
@@ -222,7 +222,7 @@ export DOCKER_IMAGE=my/custom:tag
 
 For `submit.sh`, overrides propagate through Slurm automatically: `sbatch` captures the submit-time environment, and `srun --export=ALL` propagates it to all worker nodes.
 
-Both registry images and local `.tar` tarballs are supported. `DOCKER_IMAGE_HAS_AINIC` controls whether the container uses built-in AINIC networking or falls back to host IB mounts. `MAXTEXT_PATCH_BRANCH`, when non-empty, checks out that branch inside the container's MaxText repo at startup. Per-model `.env.sh` files can also set `MAXTEXT_PATCH_BRANCH` to override at training time (see `_train.sh`).
+Both registry images and local `.tar` tarballs are supported. `USE_DOCKER_IMAGE_AINIC_DRIVER` controls whether to use the container's built-in AINIC driver (`true`) or bind-mount host IB libraries into the container (`false`). Set to `false` on partitions where the container's `libionic1` version doesn't match the host firmware. `MAXTEXT_PATCH_BRANCH`, when non-empty, checks out that branch inside the container's MaxText repo at startup. Per-model `.env.sh` files can also set `MAXTEXT_PATCH_BRANCH` to override at training time (see `_train.sh`).
 
 **Private images.** `_container.sh` tries an anonymous pull first. If the image is private, log in to the registry once on the cluster (one-time setup). In most HPC environments, home directories are on a shared filesystem, so all worker nodes inherit the credentials automatically:
 
