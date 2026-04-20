@@ -48,6 +48,27 @@ MI355X had 267.8 GiB VRAM, memfrac=0.85 -> ~227.6 GiB usable. Model params: 58.6
 | BF16-P4 | bf16-p4c-cf1-megablox | 1216 | bs=7, cf=1.0, megablox=True | SUCCESS | 23.62 | 13.51 | 1,214 | tiny gain vs cf=1.0 bs7 |
 | BF16-P4 | bf16-p4d-cf1-sparse | 1217 | bs=7, cf=1.0, sparse_matmul=True | FAILED | -- | -- | -- | RaggedDot requires shardy |
 | BF16-P4 | bf16-p4e-cf1-megablox-bs8 | 1235 | bs=8, cf=1.0, megablox=True | SUCCESS | 26.35 | 13.84 | 1,243 | **current best BF16, tiny gain** |
+| BF16-P1 | bf16-p1l-cf1-bs9-vocab4 | 1236 | bs=9, cf=1.0, num_vocab_tiling=4 | FAILED | -- | -- | -- | AssertionError: dtype mismatch (f32 vs bf16) |
+| BF16-P1 | bf16-p1m-cf1-bs9-gradbf16 | 1237 | bs=9, cf=1.0, grad_dtype=bfloat16 | OOM | -- | -- | -- | 109.83 GiB alloc failed |
+| BF16-P1 | bf16-p1n-cf1-bs9-gradbf16-vocab4 | 1238 | bs=9, cf=1.0, grad_dtype=bf16+vocab4 | FAILED | -- | -- | -- | AssertionError: dtype mismatch (f32 vs bf16) |
+| BF16-P4 | bf16-p4f-cf1-sparse-shardy-bs7 | 1239 | bs=7, cf=1.0, sparse+shardy | OOM | -- | -- | -- | 2.28 TiB alloc failed |
+| BF16-P4 | bf16-p4g-cf1-sparse-shardy-bs8 | 1240 | bs=8, cf=1.0, sparse+shardy | OOM | -- | -- | -- | 2.60 TiB alloc failed |
+| FP8-P0 | fp8-p0-cf1-bs12 | 1241 | bs=12, cf=1.0, quantization=fp8 | OOM | -- | -- | -- | 118.74 GiB alloc failed |
+| FP8-P0 | fp8-p0-cf1-bs16 | 1242 | bs=16, cf=1.0, quantization=fp8 | OOM | -- | -- | -- | 147.38 GiB alloc failed |
+| XLA-A5r | bf16-xla-combine256-v2 | 1588 | bs=7, AMD flags + combine=256B | SUCCESS | 24.27 | 13.16 | 1,182 | resubmit of 1528 (IB hang) |
+| XLA-A8 | bf16-xla-best-combo | 1589 | bs=7, NV defaults + combdim=true | SUCCESS | 24.27 | 13.15 | 1,181 | NV defaults + explicit combdim |
+| XLA-A9 | bf16-nv-megablox | 1590 | bs=7, megablox, NV defaults | SUCCESS | 24.25 | 13.16 | 1,182 | NV defaults + megablox |
+| XLA-A10 | bf16-nv-dense-shardy | 1591 | bs=7, shardy=true, NV defaults | SUCCESS | 24.27 | 13.16 | 1,181 | NV defaults + shardy |
+| FP8-NV | fp8-nv-bs7 | 1592 | bs=7, fp8, NV defaults | SUCCESS | 21.40 | 7.46* | 1,340 | **FP8 best; 335 TFLOP/s** |
+| FP8-NV | fp8-nv-bs8 | 1593 | bs=8, fp8, NV defaults | OOM | -- | -- | -- | 107.70 GiB alloc failed |
+| FP8-NV | fp8-nv-bs10 | 1594 | bs=10, fp8, NV defaults | OOM | -- | -- | -- | 122.93 GiB alloc failed |
+| CF-ext | bf16-cf2.0-bs4 | 1595 | bs=4, cf=2.0 | SUCCESS | 22.04 | 8.28 | 743 | cf=2.0 viable at bs=4 |
+| CF-ext | bf16-cf4.0-bs2 | 1596 | bs=2, cf=4.0 | SUCCESS | 20.42 | 4.47 | 401 | cf=4.0 viable at bs=2 |
+| Kimi | kimi-k2-bs1 | 1597 | bs=1, kimi-k2-1t | SUCCESS | 17.00 | 2.20 | 241 | first working kimi config |
+| Kimi | kimi-k2-bs1-cf1 | 1598 | bs=1, cf=1.0, kimi-k2-1t | SUCCESS | 16.60 | 2.25 | 247 | cf=1.0 marginal gain |
+| Kimi | kimi-k2-bs2-cf1 | 1599 | bs=2, cf=1.0, kimi-k2-1t | OOM | -- | -- | -- | 82.47 GiB alloc failed |
+| Kimi | kimi-k2-bs2-fsdp2 | 1600 | bs=2, fsdp2/ep4, kimi-k2-1t | CANCELLED | -- | -- | -- | never ran (cancelled in queue) |
+| Kimi | kimi-k2-bs4-fsdp2 | 1601 | bs=4, fsdp2/ep4, kimi-k2-1t | CANCELLED | -- | -- | -- | never ran (cancelled in queue) |
 
 ---
 
@@ -540,6 +561,71 @@ Then: Phase 1 -- try `optimizer_memory_host_offload=True` and/or `shard_exp_on_f
 - bs=10 is clearly out of range for BF16 on current settings
 - Current BF16 feasible envelope is: `bs=8 @ cf=1.0` works, `bs=9` does not
 
+### Run: bf16-p1l-cf1-bs9-vocab4 (Job 1236) -- FAILED
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-p1l-cf1-bs9-vocab4 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=9 capacity_factor=1.0 num_vocab_tiling=4
+```
+
+**Config delta:** `per_device_batch_size=9, capacity_factor=1.0, num_vocab_tiling=4`
+
+**Status: FAILED** -- `AssertionError: (ShapedArray(float32[1536,58,128,192]), ShapedArray(bfloat16[1536,58,128,192]))`
+
+**Log path:** `outputs/1236-JAX-deepseek3-671b-bf16-p1l-cf1-bs9-vocab4-per_device_batch_size_9-capacity_factor_1.0-num_vocab_tiling_4.log`
+
+**Observations:**
+- `num_vocab_tiling=4` triggers a dtype assertion during compilation: the embedding/logit projection tile expects `float32` but receives `bfloat16`
+- This is a **code-level incompatibility** with the DS3-671B model config (or the current MaxText version), not a memory issue
+- The failure occurs during `jax.transpose` inside `flax.core.axes_scan`, suggesting the tiling changes the scan axis layout and hits a dtype-invariant check
+- `num_vocab_tiling` is designed to split the vocabulary dimension into tiles during the final logit projection to reduce peak memory of the softmax/loss computation. When set to N, the vocab axis is processed in N chunks rather than all at once. However, it appears incompatible with DS3-671B's mixed-precision setup.
+
+### Run: bf16-p1m-cf1-bs9-gradbf16 (Job 1237) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-p1m-cf1-bs9-gradbf16 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1236 -- per_device_batch_size=9 capacity_factor=1.0 grad_dtype=bfloat16
+```
+
+**Config delta:** `per_device_batch_size=9, capacity_factor=1.0, grad_dtype=bfloat16`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 109.83GiB`
+
+**Log path:** `outputs/1237-JAX-deepseek3-671b-bf16-p1m-cf1-bs9-gradbf16-per_device_batch_size_9-capacity_factor_1.0-grad_dtype_bfloat16.log`
+
+**Observations:**
+- `grad_dtype=bfloat16` forces gradients to be stored in bf16 rather than the default (which may accumulate in f32). The intention is to halve gradient memory at the cost of reduced numerical precision during accumulation.
+- However, the OOM allocation size (109.83 GiB) is **identical** to the plain `bs=9, cf=1.0` run (Job 1218), meaning `grad_dtype=bfloat16` provided **zero memory savings** at this model scale
+- The bottleneck is not gradient storage but activation/buffer memory in the XLA schedule
+- `grad_dtype` is not a viable path to unlock bs=9
+
+### Run: bf16-p1n-cf1-bs9-gradbf16-vocab4 (Job 1238) -- FAILED
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-p1n-cf1-bs9-gradbf16-vocab4 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1237 -- per_device_batch_size=9 capacity_factor=1.0 grad_dtype=bfloat16 num_vocab_tiling=4
+```
+
+**Config delta:** `per_device_batch_size=9, capacity_factor=1.0, grad_dtype=bfloat16, num_vocab_tiling=4`
+
+**Status: FAILED** -- `AssertionError: (ShapedArray(float32[1536,58,128,192]), ShapedArray(bfloat16[1536,58,128,192]))`
+
+**Log path:** `outputs/1238-JAX-deepseek3-671b-bf16-p1n-cf1-bs9-gradbf16-vocab4-per_device_batch_size_9-capacity_factor_1.0-grad_dtype_bfloat16-num_vocab_tiling_4.log`
+
+**Observations:**
+- Same `num_vocab_tiling=4` dtype assertion as Job 1236 -- `grad_dtype=bfloat16` does not bypass the incompatibility
+- Confirms `num_vocab_tiling` is broken for this model regardless of other settings
+
+### Phase 1 Extended Summary: Additional Memory Knobs
+
+| Config Change | bs | Status | OOM Alloc | Notes |
+|--------------|-----|--------|-----------|-------|
+| cf=1.0 + num_vocab_tiling=4 | 9 | FAILED | -- | dtype assertion, incompatible |
+| cf=1.0 + grad_dtype=bfloat16 | 9 | OOM | 109.83 GiB | zero savings vs plain bs=9 |
+| cf=1.0 + grad_dtype=bf16 + vocab4 | 9 | FAILED | -- | same dtype assertion |
+
+**Conclusion: Neither `num_vocab_tiling` nor `grad_dtype=bfloat16` can unlock bs=9. The BF16 memory ceiling remains at `bs=8, cf=1.0`.**
+
 ---
 
 ## BF16 Phase 2: Parallelism
@@ -629,6 +715,44 @@ Then: Phase 1 -- try `optimizer_memory_host_offload=True` and/or `shard_exp_on_f
 - Same deterministic failure as Job 1215
 - `capacity_factor=1.0` does not change the sparse-matmul incompatibility
 
+### Run: bf16-p4f-cf1-sparse-shardy-bs7 (Job 1239) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-p4f-cf1-sparse-shardy-bs7 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1238 -- per_device_batch_size=7 capacity_factor=1.0 sparse_matmul=True shardy=true
+```
+
+**Config delta:** `per_device_batch_size=7, capacity_factor=1.0, sparse_matmul=True, shardy=true`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 2.28TiB`
+
+**Log path:** `outputs/1239-JAX-deepseek3-671b-bf16-p4f-cf1-sparse-shardy-bs7-per_device_batch_size_7-capacity_factor_1.0-sparse_matmul_True-shardy_true.log`
+
+**Observations:**
+- With `shardy=true`, `sparse_matmul=True` no longer crashes with the RaggedDot assertion -- **Shardy partitioner resolves the compatibility issue**
+- However, the resulting program is catastrophically memory-inefficient: it attempts to allocate **2.28 TiB** per GPU (vs ~106 GiB for the standard path)
+- Shardy is GSPMD's successor partitioner in XLA. When enabled (`shardy=true`), it takes over sharding propagation and may produce different (and in this case, much worse) sharding decisions for the MoE expert dispatch
+- `sparse_matmul` replaces the standard padded expert dispatch (dense matmul over `capacity_factor`-padded token buffers) with a sparse `RaggedDot` operation that processes only the tokens actually routed to each expert. In theory this eliminates padding waste entirely. In practice, the Shardy-generated sharding plan materializes enormous intermediate buffers
+- The 2.28 TiB allocation likely corresponds to an un-sharded or poorly-sharded expert intermediate tensor
+- `sparse_matmul + shardy` is **not viable** at this model scale on B200 without further XLA/Shardy tuning
+
+### Run: bf16-p4g-cf1-sparse-shardy-bs8 (Job 1240) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-p4g-cf1-sparse-shardy-bs8 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1239 -- per_device_batch_size=8 capacity_factor=1.0 sparse_matmul=True shardy=true
+```
+
+**Config delta:** `per_device_batch_size=8, capacity_factor=1.0, sparse_matmul=True, shardy=true`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 2.60TiB`
+
+**Log path:** `outputs/1240-JAX-deepseek3-671b-bf16-p4g-cf1-sparse-shardy-bs8-per_device_batch_size_8-capacity_factor_1.0-sparse_matmul_True-shardy_true.log`
+
+**Observations:**
+- Same pathological memory pattern as Job 1239, scaled up by the larger batch size (2.60 TiB vs 2.28 TiB)
+- Confirms `sparse_matmul + shardy` is fundamentally broken for memory at this model scale
+
 ### Run: bf16-p4e-cf1-megablox-bs8 (Job 1235) -- SUCCESS
 
 **Submit command:**
@@ -671,6 +795,618 @@ Then: Phase 1 -- try `optimizer_memory_host_offload=True` and/or `shard_exp_on_f
 | cf=1.0 + megablox=True | 7 | SUCCESS | 13.51 | 77,700 | tiny extra gain |
 | cf=1.0 + megablox=True | 8 | SUCCESS | 13.84 | 79,600 | best observed BF16, but only marginally |
 | sparse_matmul=True | 7 | FAILED | -- | -- | requires `shardy=true` |
+| cf=1.0 + sparse+shardy | 7 | OOM (2.28 TiB) | -- | -- | Shardy sharding plan catastrophic |
+| cf=1.0 + sparse+shardy | 8 | OOM (2.60 TiB) | -- | -- | same pathological pattern |
 
 **Current BF16 best config:** `per_device_batch_size=8, capacity_factor=1.0, megablox=True` (Job 1235)  
 **Best bs=7 variant:** `capacity_factor=1.0, megablox=True` (Job 1216), but only marginally above plain `cf=1.0`
+
+---
+
+## FP8 Phase 0: Initial Probes
+
+### Run: fp8-p0-cf1-bs12 (Job 1241) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::fp8-p0-cf1-bs12 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1240 -- per_device_batch_size=12 capacity_factor=1.0 quantization=fp8
+```
+
+**Config delta:** `per_device_batch_size=12, capacity_factor=1.0, quantization=fp8`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 118.74GiB`
+
+**Log path:** `outputs/1241-JAX-deepseek3-671b-fp8-p0-cf1-bs12-per_device_batch_size_12-capacity_factor_1.0-quantization_fp8.log`
+
+**Observations:**
+- FP8 quantization reduces weight/activation memory by ~50% for the quantized layers, but the overall model still has many non-quantized components (embeddings, norms, router, optimizer state)
+- At bs=12 the OOM allocation (118.74 GiB) is comparable to the BF16 bs=12 OOM (140.37 GiB) -- FP8 saved ~15% but not enough to fit bs=12
+- Need to probe smaller batch sizes (bs=8, bs=10) to find the FP8 feasible envelope
+
+### Run: fp8-p0-cf1-bs16 (Job 1242) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::fp8-p0-cf1-bs16 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1241 -- per_device_batch_size=16 capacity_factor=1.0 quantization=fp8
+```
+
+**Config delta:** `per_device_batch_size=16, capacity_factor=1.0, quantization=fp8`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 147.38GiB`
+
+**Log path:** `outputs/1242-JAX-deepseek3-671b-fp8-p0-cf1-bs16-per_device_batch_size_16-capacity_factor_1.0-quantization_fp8.log`
+
+**Observations:**
+- bs=16 with FP8 OOM at 147.38 GiB, comparable to BF16 bs=16 (171.96 GiB) -- FP8 saved ~14% at this batch size
+- Memory savings from FP8 alone are not transformative for this model's memory footprint
+
+### FP8 Phase 0 Summary
+
+| Config | bs | Status | OOM Alloc | Notes |
+|--------|-----|--------|-----------|-------|
+| fp8, cf=1.0 | 12 | OOM | 118.74 GiB | ~15% less than BF16 bs=12 |
+| fp8, cf=1.0 | 16 | OOM | 147.38 GiB | ~14% less than BF16 bs=16 |
+
+**Next steps:** Probe FP8 at bs=8 (should work based on extrapolation) and bs=10 to find the FP8 memory ceiling. Then measure throughput and compare to BF16 best.
+
+### Run: fp8-nv-bs7 (Job 1592) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::fp8-nv-bs7 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=7 quantization=fp8 "_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=''"
+```
+
+**Config delta:** `per_device_batch_size=7, quantization=fp8, NV default XLA flags`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **21.40 s** (vs BF16 NV defaults 24.23s, **-11.7%**)
+- MFU: **7.46%** (relative to FP8 peak of 4,500 TFLOP/s)
+- TFLOP/s/device: **335.5** (vs BF16 NV 296.4, **+13.2%**)
+- Tokens/s/device: **1,340** (vs BF16 NV 1,183, **+13.3%**)
+- Total tokens/s (64 GPUs): **~85,800** (vs BF16 NV ~75,700, **+13.3%**)
+
+**Training wall time:** 441s (7m 22s)
+**Compilation time (step 0):** 45.2s (longer than BF16 ~36s due to FP8 kernel compilation)
+
+**Observations:**
+- **FP8 with NV defaults is the new overall best config for DeepSeek3-671B on B200**
+- Despite lower MFU% (7.46% vs 13.17%), the FP8 peak is 2x higher (4,500 vs 2,250 TFLOP/s), yielding 335.5 TFLOP/s actual vs 296.4 for BF16
+- 13.3% throughput improvement over best BF16 at the same batch size
+- Step time drops from 24.2s to 21.4s -- FP8 tensor cores deliver meaningful speedup on the GEMM-dominated MoE workload
+- Loss trajectory is slightly different (12.268→10.664 vs BF16 12.268→10.069 at step 14) due to reduced numerical precision, but training remains stable
+
+### Run: fp8-nv-bs8 (Job 1593) -- OOM
+
+**Config delta:** `per_device_batch_size=8, quantization=fp8, NV default XLA flags`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 107.70GiB`
+
+**Observations:**
+- FP8 does not unlock bs=8 with NV defaults -- the memory savings from FP8 quantization are offset by the removal of `slop_factor=95` (NV defaults use the XLA default which is less constrained)
+- OOM at 107.70 GiB is close to the BF16 AMD-flags bs=8 OOM (108.63 GiB)
+
+### Run: fp8-nv-bs10 (Job 1594) -- OOM
+
+**Config delta:** `per_device_batch_size=10, quantization=fp8, NV default XLA flags`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 122.93GiB`
+
+**Observations:**
+- FP8 bs=10 is far over the memory limit, as expected from extrapolation
+
+### FP8 Phase Summary (Updated)
+
+| Config | bs | XLA Flags | Status | Step Time (s) | MFU (%) | TFLOP/s/dev | Tok/s/dev | Notes |
+|--------|-----|-----------|--------|---------------|---------|-------------|-----------|-------|
+| fp8, cf=1.0, AMD flags | 12 | AMD-parity | OOM (118.74 GiB) | -- | -- | -- | -- | |
+| fp8, cf=1.0, AMD flags | 16 | AMD-parity | OOM (147.38 GiB) | -- | -- | -- | -- | |
+| **fp8, NV defaults** | **7** | **NV defaults** | **SUCCESS** | **21.40** | **7.46*** | **335.5** | **1,340** | **overall best** |
+| fp8, NV defaults | 8 | NV defaults | OOM (107.70 GiB) | -- | -- | -- | -- | |
+| fp8, NV defaults | 10 | NV defaults | OOM (122.93 GiB) | -- | -- | -- | -- |
+
+*MFU% is relative to FP8 peak (4,500 TFLOP/s for B200). Equivalent BF16-normalized MFU would be ~14.91%.
+
+---
+
+## Capacity Factor Exploration (Independent Line 2)
+
+### Run: bf16-cf2.0 (Job 1522) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-cf2.0 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=7 capacity_factor=2.0
+```
+
+**Config delta:** `per_device_batch_size=7, capacity_factor=2.0` (baseline cf=1.25)
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 116.84GiB`
+
+**Log path:** `outputs/1522-JAX-deepseek3-671b-bf16-cf2.0-per_device_batch_size_7-capacity_factor_2.0/log`
+
+**Observations:**
+- `capacity_factor=2.0` increases expert padding from 1.25x to 2x, significantly increasing activation memory
+- OOM at 116.84 GiB vs baseline (bs=7, cf=1.25) which fits in memory
+- For `cf=2.0` to work, would need to reduce bs further (maybe bs=4-5)
+
+### Run: bf16-cf4.0 (Job 1523) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-cf4.0 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1522 -- per_device_batch_size=7 capacity_factor=4.0
+```
+
+**Config delta:** `per_device_batch_size=7, capacity_factor=4.0` (baseline cf=1.25)
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 145.29GiB`
+
+**Log path:** `outputs/1523-JAX-deepseek3-671b-bf16-cf4.0-per_device_batch_size_7-capacity_factor_4.0/log`
+
+**Observations:**
+- `capacity_factor=4.0` quadruples expert padding, massive memory increase
+- OOM at 145.29 GiB (~24% more than cf=2.0), proportional to the increased padding
+- Would require bs=2-3 at most to fit, likely impractical for throughput
+
+### Run: bf16-cf2.0-bs4 (Job 1595) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-cf2.0-bs4 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=4 capacity_factor=2.0
+```
+
+**Config delta:** `per_device_batch_size=4, capacity_factor=2.0`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **22.04 s**
+- MFU: **8.28%**
+- TFLOP/s/device: **186.2**
+- Tokens/s/device: **743**
+- Total tokens/s (64 GPUs): **~47,600**
+
+**Training wall time:** 414s (6m 56s)
+
+**Observations:**
+- `cf=2.0` is viable at `bs=4` but throughput is 37% worse than the baseline `bs=7/cf=1.25` (47.6K vs 69.2K tok/s)
+- The extra expert padding provides no throughput benefit -- it only wastes compute on padding tokens
+
+### Run: bf16-cf4.0-bs2 (Job 1596) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-cf4.0-bs2 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=2 capacity_factor=4.0
+```
+
+**Config delta:** `per_device_batch_size=2, capacity_factor=4.0`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **20.42 s**
+- MFU: **4.47%**
+- TFLOP/s/device: **100.5**
+- Tokens/s/device: **401**
+- Total tokens/s (64 GPUs): **~25,700**
+
+**Training wall time:** 389s (6m 31s)
+
+**Observations:**
+- `cf=4.0` is viable at `bs=2` but throughput is catastrophically low -- 63% below baseline
+- MFU of 4.47% means >55% of FLOPs are wasted on expert padding
+- Confirms that high capacity_factor values are only useful if token-dropping behavior needs to be studied, not for throughput
+
+### CF Exploration Summary (Updated)
+
+| capacity_factor | bs | Status | MFU (%) | Tok/s/dev | Tok/s total | Notes |
+|----------------|-----|--------|---------|-----------|-------------|-------|
+| 1.0 | 7 | SUCCESS | 13.46 | 1,209 | 77,400 | **best throughput** (Job 1207) |
+| 1.25 (baseline) | 7 | SUCCESS | 12.04 | 1,081 | 69,210 | baseline (Job 1200) |
+| 2.0 | 7 | OOM | -- | -- | -- | 116.84 GiB (Job 1522) |
+| **2.0** | **4** | **SUCCESS** | **8.28** | **743** | **47,600** | **viable but -37% vs baseline** (Job 1595) |
+| 4.0 | 7 | OOM | -- | -- | -- | 145.29 GiB (Job 1523) |
+| **4.0** | **2** | **SUCCESS** | **4.47** | **401** | **25,700** | **viable but -63% vs baseline** (Job 1596) |
+
+**Conclusion:** Higher capacity_factor values require proportionally smaller batch sizes and deliver significantly worse throughput. `cf=1.0` remains optimal for throughput. `cf=2.0/4.0` are only useful for studying expert token-dropping behavior, not for benchmark throughput.
+
+---
+
+## XLA Flags Optimization (Independent Line 1)
+
+**Baseline:** Job 1200 (bs=7, cf=1.25, AMD-parity XLA flags) -- MFU 12.04%, step time 27.48s, 69,210 tok/s
+
+Current AMD-parity XLA flags in `train_env.nvidia.sh`:
+- `--xla_gpu_memory_limit_slop_factor=95`
+- `--xla_gpu_reduce_scatter_combine_threshold_bytes=8589934592` (8 GiB)
+- `--xla_gpu_all_gather_combine_threshold_bytes=8589934592` (8 GiB)
+- `--xla_gpu_enable_triton_gemm=false`
+- `--xla_gpu_enable_cublaslt=true`
+- `--xla_gpu_autotune_level=0`
+- `--xla_gpu_enable_all_gather_combine_by_dim=false`
+
+### Run: bf16-xla-nv-defaults (Job 1524) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-nv-defaults -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1523 -- per_device_batch_size=7 _env_XLA_FLAGS_REPLACE="--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=''"
+```
+
+**Config delta:** Replaced all XLA flags with NVIDIA image defaults (LHS=true + command_buffer fix only)
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **24.23 s** (vs baseline 27.48s, **-11.8%**)
+- MFU: **13.17%** (vs baseline 12.04%, **+9.4%**)
+- TFLOP/s/device: **296.4**
+- Tokens/s/device: **1,183**
+- Total tokens/s (64 GPUs): **~75,700** (vs baseline 69,210, **+9.4%**)
+
+**Compilation time (step 0):** 36.3s (vs baseline ~39s)
+**Training wall time:** 470s (7m 50s)
+
+**Log path:** `outputs/1524-JAX-deepseek3-671b-bf16-xla-nv-defaults-per_device_batch_size_7-_env_XLA_FLAGS_REPLACE_--xla_gpu_enable_latency_hiding_scheduler_true,--xla_gpu_enable_command_buffer_''/log`
+
+**Observations:**
+- **Major finding:** Removing all AMD-parity XLA flags gives a 9.4% throughput boost on B200
+- The AMD flags (slop_factor=95, combine_threshold=8GB, autotune=0, triton=false) were collectively a **significant negative optimization** for B200
+- This is now the best BF16 result at bs=7 with cf=1.25, surpassing even the cf=1.0 results at the same batch size (MFU 13.46% at bs=7/cf=1.0 vs 13.17% at bs=7/cf=1.25 with NV defaults)
+- The remaining single-variable XLA tests (A2-A7) will reveal which specific AMD flag(s) caused the most harm
+
+### Run: bf16-xla-autotune4 (Job 1525) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-autotune4 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1524 -- per_device_batch_size=7 _env_EXTRA_XLA_FLAGS=--xla_gpu_autotune_level=4
+```
+
+**Config delta:** Appended `autotune_level=4` (overrides base `autotune_level=0`)
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-7):**
+- Step time: **26.50 s** (vs baseline 27.48s)
+- MFU: **12.04%** (identical to baseline)
+- Tokens/s/device: **1,082**
+- Total tokens/s (64 GPUs): **~69,200**
+
+**Compilation time (step 0):** 40.2s (slightly longer due to autotuning)
+
+**Log path:** `outputs/1525-JAX-deepseek3-671b-bf16-xla-autotune4-per_device_batch_size_7-_env_EXTRA_XLA_FLAGS_--xla_gpu_autotune_level_4/log`
+
+**Observations:**
+- Kernel autotuning provides zero benefit when the other AMD-parity flags are still present
+- The autotuner likely finds the same cuBLAS kernels as the default selection
+- Compilation overhead is minimal (~1s extra), so this flag is harmless but useless in isolation
+
+### Run: bf16-xla-triton (Job 1526) -- SUCCESS (catastrophic perf)
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-triton -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1524 -- per_device_batch_size=7 _env_EXTRA_XLA_FLAGS=--xla_gpu_enable_triton_gemm=true
+```
+
+**Config delta:** Appended `triton_gemm=true` (overrides base `triton_gemm=false`)
+
+**Status: SUCCESS** (but performance is catastrophically bad)
+
+**Steady-state summary (steps 5-6):**
+- Step time: **100.58 s** (vs baseline 27.48s, **+266%**)
+- MFU: **3.17%** (vs baseline 12.04%, **-74%**)
+- Tokens/s/device: **285**
+- Total tokens/s (64 GPUs): **~18,200**
+
+**Compilation time (step 0):** ~950s (long Triton kernel compilation)
+**Training wall time:** 1598s (26m 38s)
+
+**Log path:** `outputs/1526-JAX-deepseek3-671b-bf16-xla-triton-per_device_batch_size_7-_env_EXTRA_XLA_FLAGS_--xla_gpu_enable_triton_gemm_true/log`
+
+**Observations:**
+- Triton GEMM is an **extreme negative optimization** on B200 for this MoE model
+- cuBLAS kernels vastly outperform Triton-generated kernels for the specific GEMM shapes in DeepSeek3
+- The AMD image explicitly disables Triton GEMM (`triton_gemm=false`) -- this was a correct decision
+- **Never enable `triton_gemm=true` for this model on B200**
+
+### Run: bf16-xla-slop300 (Job 1527) -- OOM
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-slop300 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1524 -- per_device_batch_size=7 _env_EXTRA_XLA_FLAGS=--xla_gpu_memory_limit_slop_factor=300
+```
+
+**Config delta:** Appended `slop_factor=300` (overrides base `slop_factor=95`)
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 108.71GiB`
+
+**Log path:** `outputs/1527-JAX-deepseek3-671b-bf16-xla-slop300-per_device_batch_size_7-_env_EXTRA_XLA_FLAGS_--xla_gpu_memory_limit_slop_factor_300/log`
+
+**Observations:**
+- `slop_factor=300` gives the Latency Hiding Scheduler (LHS) a 3x memory budget multiplier
+- LHS uses this budget to overlap computation with communication by pre-allocating buffers
+- At 300, LHS tries to allocate too aggressively for the available HBM, causing OOM
+- The base `slop_factor=95` is conservative but necessary for memory safety at bs=7
+
+### Run: bf16-xla-combine256 (Job 1528) -- IB HANG (cancelled)
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-combine256 -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1525 -- per_device_batch_size=7 "_env_EXTRA_XLA_FLAGS=--xla_gpu_reduce_scatter_combine_threshold_bytes=256,--xla_gpu_all_gather_combine_threshold_bytes=256"
+```
+
+**Config delta:** Appended combine thresholds = 256 bytes (overrides base 8 GiB)
+
+**Status: IB HANG** -- `IBV_WC_RETRY_EXC_ERR(12)` across all nodes during initialization. Hung for ~12 hours. Cancelled.
+
+**Log path:** `outputs/1528-JAX-deepseek3-671b-bf16-xla-combine256-per_device_batch_size_7-_env_EXTRA_XLA_FLAGS_--xla_gpu_reduce_scatter_combine_threshold_bytes_256,--xla_gpu_all_gather_combine_threshold_bytes_256/log`
+
+**Observations:**
+- Transient InfiniBand P_Key issue (same as Job 1202), not related to the XLA flag change
+- No training steps completed -- the hang occurred during initial NCCL setup
+- **Resubmitted as Job 1588**
+
+### Run: bf16-xla-pipelined (Job 1529) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-pipelined -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1526 -- per_device_batch_size=7 "_env_EXTRA_XLA_FLAGS=--xla_gpu_enable_pipelined_all_gather=true,--xla_gpu_enable_pipelined_all_reduce=true,--xla_gpu_enable_pipelined_reduce_scatter=true"
+```
+
+**Config delta:** Appended pipelined all-gather, all-reduce, reduce-scatter = true
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-6):**
+- Step time: **26.71 s** (vs baseline 27.48s, -2.8%)
+- MFU: **11.95%** (vs baseline 12.04%, **-0.7%**)
+- Tokens/s/device: **1,073**
+- Total tokens/s (64 GPUs): **~68,700**
+
+**Log path:** `outputs/1529-JAX-deepseek3-671b-bf16-xla-pipelined-per_device_batch_size_7-_env_EXTRA_XLA_FLAGS_--xla_gpu_enable_pipelined_all_gather_true,--xla_gpu_enable_pipelined_all_reduce_true,--xla_gpu_enable_pipelined_reduce_scatter_true/log`
+
+**Observations:**
+- Pipelined collectives on top of AMD-parity flags are slightly negative (-0.7%)
+- The LHS already handles overlap scheduling; adding explicit pipelining may introduce conflicts
+- Not recommended as a standalone change
+
+### Run: bf16-xla-combdim (Job 1530) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-combdim -N 8 -w hungry-hippo-fin-03-[1-8] --dependency=afterany:1527 -- per_device_batch_size=7 _env_EXTRA_XLA_FLAGS=--xla_gpu_enable_all_gather_combine_by_dim=true
+```
+
+**Config delta:** Appended `combine_by_dim=true` (overrides base `combine_by_dim=false`)
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-6):**
+- Step time: **25.10 s** (vs baseline 27.48s, **-8.7%**)
+- MFU: **12.71%** (vs baseline 12.04%, **+5.6%**)
+- TFLOP/s/device: **286.0**
+- Tokens/s/device: **1,142**
+- Total tokens/s (64 GPUs): **~73,100**
+
+**Log path:** `outputs/1530-JAX-deepseek3-671b-bf16-xla-combdim-per_device_batch_size_7-_env_EXTRA_XLA_FLAGS_--xla_gpu_enable_all_gather_combine_by_dim_true/log`
+
+**Observations:**
+- **Second most impactful single flag change** after NV-defaults
+- `combine_by_dim=true` allows the XLA compiler to combine all-gather operations along specific dimensions, reducing the number of collective calls
+- The base `combine_by_dim=false` was a significant negative optimization
+- This single flag accounts for ~60% of the total gain seen in NV-defaults (5.6% vs 9.4%)
+
+### XLA Flags Summary
+
+| Test | Flag Change | MFU (%) | vs Baseline | Step Time (s) | Assessment |
+|------|-------------|---------|-------------|---------------|------------|
+| Baseline (1200) | AMD-parity flags | 12.04 | -- | 27.48 | reference |
+| **A1: NV defaults (1524)** | Remove all AMD flags | **13.17** | **+9.4%** | **24.23** | **BEST** |
+| A2: autotune4 (1525) | autotune_level=0→4 | 12.04 | 0% | 26.50 | no effect |
+| A3: triton (1526) | triton_gemm=false→true | 3.17 | -74% | 100.58 | catastrophic |
+| A4: slop300 (1527) | slop_factor=95→300 | OOM | -- | -- | too aggressive |
+| A5: combine256 (1528) | combine=8GB→256B | IB hang | -- | -- | resubmit 1588 |
+| A6: pipelined (1529) | +pipelined collectives | 11.95 | -0.7% | 26.71 | slightly worse |
+| **A7: combdim (1530)** | combine_by_dim=false→true | **12.71** | **+5.6%** | **25.10** | **significant gain** |
+
+### Run: bf16-xla-combine256-v2 (Job 1588) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-combine256-v2 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=7 "_env_EXTRA_XLA_FLAGS=--xla_gpu_reduce_scatter_combine_threshold_bytes=256,--xla_gpu_all_gather_combine_threshold_bytes=256"
+```
+
+**Config delta:** AMD-parity flags + combine thresholds = 256 bytes (resubmit of Job 1528 which had IB hang)
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **24.27 s** (vs baseline 27.48s, **-11.7%**)
+- MFU: **13.16%** (vs baseline 12.04%, **+9.3%**)
+- TFLOP/s/device: **295.7**
+- Tokens/s/device: **1,182**
+- Total tokens/s (64 GPUs): **~75,700**
+
+**Observations:**
+- Reducing combine thresholds from 8 GiB to 256 bytes gives almost the same gain as removing all AMD flags entirely (+9.3% vs +9.4%)
+- This confirms the 8 GiB combine threshold was the other major negative optimization alongside `combine_by_dim=false`
+- Smaller thresholds allow more frequent, smaller collectives which overlap better with computation on B200's NVSwitch fabric
+
+### Run: bf16-xla-best-combo (Job 1589) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-xla-best-combo -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=7 "_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer='',--xla_gpu_enable_all_gather_combine_by_dim=true"
+```
+
+**Config delta:** NV defaults + explicit `combine_by_dim=true`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **24.27 s** (vs NV defaults 24.23s)
+- MFU: **13.15%** (vs NV defaults 13.17%)
+- Tokens/s/device: **1,181**
+- Total tokens/s (64 GPUs): **~75,600**
+
+**Observations:**
+- Adding explicit `combine_by_dim=true` on top of NV defaults provides **no additional gain** -- effectively identical performance
+- This means NV defaults already implicitly enable `combine_by_dim=true` (or the XLA default is `true`)
+- The 5.6% gain from A7 (combdim) was because it flipped the AMD flag's `false` override to `true`
+
+### Run: bf16-nv-megablox (Job 1590) -- SUCCESS
+
+**Config delta:** NV defaults + `megablox=True`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **24.25 s**
+- MFU: **13.16%**
+- Tokens/s/device: **1,182**
+- Total tokens/s (64 GPUs): **~75,600**
+
+**Observations:**
+- `megablox=True` on top of NV defaults is neutral -- identical to plain NV defaults
+- Consistent with earlier finding (Job 1214): megablox provides no benefit for DS3-671B at bs=7
+
+### Run: bf16-nv-dense-shardy (Job 1591) -- SUCCESS
+
+**Config delta:** NV defaults + `shardy=true`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **24.27 s**
+- MFU: **13.16%**
+- Tokens/s/device: **1,181**
+- Total tokens/s (64 GPUs): **~75,600**
+
+**Observations:**
+- `shardy=true` with NV defaults performs identically to plain NV defaults for the dense (non-sparse) code path
+- Shardy only causes issues when combined with `sparse_matmul=True` (pathological memory, Jobs 1239-1240)
+- For standard dispatch, Shardy is a drop-in replacement with no perf impact
+
+### XLA Flags Summary (Updated)
+
+| Test | Flag Change | MFU (%) | vs Baseline | Step Time (s) | Assessment |
+|------|-------------|---------|-------------|---------------|------------|
+| Baseline (1200) | AMD-parity flags | 12.04 | -- | 27.48 | reference |
+| **A1: NV defaults (1524)** | Remove all AMD flags | **13.17** | **+9.4%** | **24.23** | **BEST** |
+| A2: autotune4 (1525) | autotune_level=0→4 | 12.04 | 0% | 26.50 | no effect |
+| A3: triton (1526) | triton_gemm=false→true | 3.17 | -74% | 100.58 | catastrophic |
+| A4: slop300 (1527) | slop_factor=95→300 | OOM | -- | -- | too aggressive |
+| **A5r: combine256 (1588)** | combine=8GB→256B | **13.16** | **+9.3%** | **24.27** | **~equal to NV defaults** |
+| A6: pipelined (1529) | +pipelined collectives | 11.95 | -0.7% | 26.71 | slightly worse |
+| **A7: combdim (1530)** | combine_by_dim=false→true | **12.71** | **+5.6%** | **25.10** | **significant gain** |
+| A8: best-combo (1589) | NV defaults + combdim=true | 13.15 | +9.2% | 24.27 | no gain over NV defaults |
+| A9: NV + megablox (1590) | NV defaults + megablox | 13.16 | +9.3% | 24.25 | neutral |
+| A10: NV + shardy (1591) | NV defaults + shardy | 13.16 | +9.3% | 24.27 | neutral |
+
+**Key findings:**
+1. The AMD-parity XLA flags collectively cost 9.4% MFU on B200
+2. **Two flags account for nearly all the loss:** `combine_by_dim=false` (~60%) and `combine_threshold=8GB` (~40%)
+3. `triton_gemm=true` is catastrophic (-74%) -- must stay disabled
+4. `slop_factor=300` causes OOM; `slop_factor=95` is a necessary constraint
+5. NV defaults are essentially optimal -- adding `combine_by_dim=true`, `megablox`, or `shardy` provides no additional gain
+6. **Recommended BF16 XLA config:** Use NV image defaults (LHS=true + command_buffer fix only)
+
+---
+
+## Kimi-K2-1T: Initial Batch Sweep
+
+### Kimi Batch Sweep (Jobs 1531-1534) -- ALL OOM
+
+| Job | bs | Status | OOM Alloc | Notes |
+|-----|-----|--------|-----------|-------|
+| 1531 | 4 | OOM | 100.20 GiB | |
+| 1534 | 3 | OOM | 91.19 GiB | |
+| 1532 | 2 | OOM | 83.33 GiB | |
+| 1533 | 6 | OOM | 118.07 GiB | |
+
+**All batch sizes from bs=2 to bs=6 OOM.** Kimi-K2-1T (1T parameters) with `ici_ep=8, dcn_fsdp=8` parallelism requires too much memory on B200 (~179 GiB HBM3e, ~166 GiB usable).
+
+**Memory scaling:** OOM alloc grows linearly with bs (roughly +8.5 GiB per bs increment), confirming that even the model weights alone are near the memory limit.
+
+### Run: kimi-k2-bs1 (Job 1597) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh kimi-k2-1t::kimi-k2-bs1 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=1
+```
+
+**Config delta:** `per_device_batch_size=1`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **17.00 s**
+- MFU: **2.20%**
+- TFLOP/s/device: **49.5**
+- Tokens/s/device: **241**
+- Total tokens/s (64 GPUs): **~15,400**
+
+**Training wall time:** 340s (5m 40s)
+
+**Observations:**
+- **bs=1 is the only working batch size** for Kimi-K2-1T on B200 with default parallelism
+- MFU is extremely low (2.20%) due to the minimal batch size -- GPUs are starved of work
+- The 1T model barely fits at bs=1; it needs >16 nodes or memory-saving techniques to reach practical throughput
+
+### Run: kimi-k2-bs1-cf1.0 (Job 1598) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh kimi-k2-1t::kimi-k2-bs1-cf1.0 -N 8 -w hungry-hippo-fin-03-[1-8] -- per_device_batch_size=1 capacity_factor=1.0
+```
+
+**Config delta:** `per_device_batch_size=1, capacity_factor=1.0`
+
+**Status: SUCCESS**
+
+**Steady-state summary (steps 5-13):**
+- Step time: **16.60 s** (vs cf=1.25 17.00s, **-2.4%**)
+- MFU: **2.25%** (vs cf=1.25 2.20%, **+2.3%**)
+- TFLOP/s/device: **50.7**
+- Tokens/s/device: **247**
+- Total tokens/s (64 GPUs): **~15,800**
+
+**Training wall time:** 331s (5m 31s)
+
+**Observations:**
+- `cf=1.0` provides a marginal gain (+2.3%) consistent with DeepSeek3 results -- reduced expert padding saves both memory and compute
+- At bs=1 the gain is small in absolute terms (~400 more tok/s total)
+- Both bs=1 configs confirm Kimi-K2-1T can train on B200 8-node, but throughput is impractical
+
+### Run: kimi-k2-bs2-cf1.0 (Job 1599) -- OOM
+
+**Config delta:** `per_device_batch_size=2, capacity_factor=1.0`
+
+**Status: OOM** -- `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 82.47GiB`
+
+**Observations:**
+- `cf=1.0` is not enough to unlock bs=2 for Kimi-K2-1T
+- OOM at 82.47 GiB (vs bs=2/cf=1.25 OOM at 83.33 GiB from Job 1532) -- only ~1 GiB savings from cf=1.0
+- The memory pressure from the 1T model weights dominates; capacity_factor changes are a drop in the bucket
+
+### Jobs 1600, 1601 -- CANCELLED
+
+**Job 1600:** `per_device_batch_size=2, ici_fsdp_parallelism=2, ici_expert_parallelism=4` -- CANCELLED before running
+**Job 1601:** `per_device_batch_size=4, ici_fsdp_parallelism=2, ici_expert_parallelism=4` -- CANCELLED before running
+
+These were queued as dependency chain after Job 1599 but were cancelled (likely manually) before execution. The `ici_fsdp=2, ici_ep=4` parallelism split remains untested for Kimi-K2-1T.
+
+### Kimi-K2-1T Summary (Updated)
+
+| Config | bs | Status | MFU (%) | Tok/s/dev | Tok/s total | Notes |
+|--------|-----|--------|---------|-----------|-------------|-------|
+| default (cf=1.25) | 6 | OOM (118.07 GiB) | -- | -- | -- | Job 1533 |
+| default (cf=1.25) | 4 | OOM (100.20 GiB) | -- | -- | -- | Job 1531 |
+| default (cf=1.25) | 3 | OOM (91.19 GiB) | -- | -- | -- | Job 1534 |
+| default (cf=1.25) | 2 | OOM (83.33 GiB) | -- | -- | -- | Job 1532 |
+| cf=1.0 | 2 | OOM (82.47 GiB) | -- | -- | -- | Job 1599 |
+| **default (cf=1.25)** | **1** | **SUCCESS** | **2.20** | **241** | **15,400** | **Job 1597** |
+| **cf=1.0** | **1** | **SUCCESS** | **2.25** | **247** | **15,800** | **Job 1598, marginal gain** |
+| fsdp2/ep4 | 2 | CANCELLED | -- | -- | -- | Job 1600, untested |
+| fsdp2/ep4 | 4 | CANCELLED | -- | -- | -- | Job 1601, untested |
+
+**Conclusion:** Kimi-K2-1T is severely memory-constrained on 8-node B200. Only bs=1 fits, yielding impractical throughput (~2.2% MFU). The `ici_fsdp=2/ici_ep=4` parallelism split (Jobs 1600-1601) was never tested and may be worth resubmitting -- doubling FSDP sharding could halve the non-expert weight memory per GPU, potentially unlocking bs=2+.
