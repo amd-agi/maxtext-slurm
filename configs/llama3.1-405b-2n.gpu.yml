@@ -38,7 +38,7 @@ use_iota_embed: True
 scan_layers: True
 logits_dot_in_fp32: False
 megablox: False
-optimizer_memory_host_offload: False
+optimizer_memory_host_offload: True # True at 2N: optimizer states don't fit in HBM when only 16-way FSDP
 param_scan_axis: 1
 shardy: False
 
