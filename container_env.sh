@@ -20,8 +20,10 @@ fi
 
 # ── Docker image ──────────────────────────────────────────────────────────────
 #DOCKER_IMAGE="${DOCKER_IMAGE:-rocm/jax-training:maxtext-v26.2}"
-# ANP 2N repro (matches jobs 9501/9511 image for apples-to-apples comparison).
-DOCKER_IMAGE="${DOCKER_IMAGE:-rocm/pyt-megatron-lm-jax-nightly-private:jax_rocm7.2_jax_0.8.2_20260303}"
+# ANP 2N repro: use the current partition-local nightly that is pre-cached on the
+# deepep-a77 compute nodes. Has /workspace/amd-anp/build/librccl-anp.so
+# (same path as jobs 9501/9511), so the ANP toggle in _container.sh still applies.
+DOCKER_IMAGE="${DOCKER_IMAGE:-rocm/primus-training-private:20260414_nightly_ainic77}"
 USE_DOCKER_IMAGE_AINIC_DRIVER="${USE_DOCKER_IMAGE_AINIC_DRIVER:-true}"    # Use the container's built-in AINIC driver; set to false to bind-mount host IB libs instead (needed when container libionic1 mismatches host firmware)
 MAXTEXT_REPO_DIR="${MAXTEXT_REPO_DIR:-/workspace/maxtext}"  # MaxText location inside the container
 MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH:-}"            # Global patch branch (empty = image default); per-model .env.sh can override
