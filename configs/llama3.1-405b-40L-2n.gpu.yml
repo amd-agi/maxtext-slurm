@@ -1,0 +1,87 @@
+# ── Run Config ───────────────────────────────────────────────────────────────
+# Scaled-down variant of llama3.1-405b for 2-node ANP perf testing.
+#
+# Architectural rationale for the ANP delta demo:
+#   - Keep every width knob identical to full 405B (emb_dim=16384, mlp_dim=53248,
+#     heads=128Q/8KV, head_dim=128, attention block = llama2, GQA 16:1). This
+#     preserves the per-layer FSDP all-gather / reduce-scatter *byte volume* and
+#     per-layer compute/comm ratio — the things ANP actually touches.
+#   - Only reduce DEPTH (126 → 40 decoder layers). Depth reduces state linearly
+#     without changing the comm pattern, so the 2N run stresses the network the
+#     same way 8N stresses it on full 405B, just with fewer rounds per step.
+#   - Result: ~148B params. With pure FSDP-16 on 2N × 8 MI355X:
+#       ~9 GB weights/GPU (fp8) + ~19 GB grads/GPU (bf16) +
+#       ~75 GB optimizer/GPU (fp32 m+v) ≈ 103 GB state/GPU,
+#     leaving ~160 GB/GPU HBM headroom for activations. No host offload — so
+#     comm is on the critical path and ANP vs no-ANP can actually show up.
+base_config: "base.yml"
+run_name: "llama3_405B_40L_training_2n"
+hardware: "gpu"
+model_name: "llama3.1-405b"
+
+# Override 405B depth: 126 → 40 layers so optimizer state fits HBM on 2N.
+base_num_decoder_layers: 40
+
+# ── Training ─────────────────────────────────────────────────────────────────
+steps: 15
+
+# ── Parallelism ──────────────────────────────────────────────────────────────
+# Pure FSDP, identical to the 8N 405B and ds-proxy-se0-e256-h4096 runs that
+# produced the reference ANP delta.  ici_fsdp=-1 → 8-way within node,
+# dcn_fsdp=-1 → 2-way across nodes. Cross-node AllGather/ReduceScatter every
+# step. ANP plugin toggling in _container.sh therefore sees its full effect.
+dcn_data_parallelism: 1
+dcn_fsdp_parallelism: -1
+dcn_sequence_parallelism: 1
+dcn_tensor_parallelism: 1
+dcn_pipeline_parallelism: 1
+ici_data_parallelism: 1
+ici_fsdp_parallelism: -1
+ici_sequence_parallelism: 1
+ici_tensor_parallelism: 1
+ici_pipeline_parallelism: 1
+
+# ── Batch & Sequence ─────────────────────────────────────────────────────────
+# Conservative pdbs=1 to guarantee fit. Post-validation we can bump to 2 or 4
+# to push compute up without changing the comm pattern.
+per_device_batch_size: 1
+max_target_length: 8192
+packing: true
+max_segments_per_seq: 32
+
+# ── Attention & Compute ──────────────────────────────────────────────────────
+attention: "cudnn_flash_te"
+remat_policy: 'full'
+use_iota_embed: True
+scan_layers: True
+logits_dot_in_fp32: False
+megablox: False
+# No host offload — this is the whole point; optimizer must live in HBM so
+# comm (not PCIe) is the bottleneck and ANP's effect on RCCL is observable.
+optimizer_memory_host_offload: False
+param_scan_axis: 1
+shardy: False
+
+# ── Dtypes & Quantization ────────────────────────────────────────────────────
+dtype: "bfloat16"
+weight_dtype: bfloat16
+quantization: "fp8"
+quantize_kvcache: False
+kv_quant_axis: "heads_and_dkv"
+kv_quant_dtype: "int8"
+checkpoint_is_quantized: False
+
+# ── Profiler ─────────────────────────────────────────────────────────────────
+# Profiler off for benchmark runs — xplane collection has meaningful overhead
+# and adds ~1s/step; we want clean TGS numbers.
+profiler: ""
+skip_first_n_steps_for_profiler: 3
+profiler_steps: 1
+
+# ── Checkpointing ────────────────────────────────────────────────────────────
+enable_checkpointing: False
+async_checkpointing: False
+
+# ── Dataset ──────────────────────────────────────────────────────────────────
+dataset_type: "synthetic"
+tokenizer_path: "meta-llama/Llama-3.3-70B-Instruct"
