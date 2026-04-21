@@ -19,11 +19,12 @@ run_name: "llama3_405B_40L_training_2n"
 hardware: "gpu"
 model_name: "llama3.1-405b"
 
-# NOTE: base_num_decoder_layers cannot be overridden from the user YAML — the
-# model registry (configs/models/llama3.1-405b.yml) takes precedence. It must
-# be passed as a CLI passthrough arg instead, e.g.
-#   ./submit.sh 405b-40L-2n:... -- base_num_decoder_layers=40 ...
-# The submit helper below (or the invocation docs) should include it.
+# IMPORTANT: The 40-layer override MUST be passed as a CLI passthrough arg —
+# MaxText's model registry (configs/models/llama3.1-405b.yml ships with
+# base_num_decoder_layers: 126) wins over any value set in this user YAML.
+# Required invocation:
+#   ./submit.sh 405b-40L-2n:<tag> -- base_num_decoder_layers=40 ...
+# Without that flag this file silently runs as full 405B → OOM at 2N.
 
 # ── Training ─────────────────────────────────────────────────────────────────
 steps: 15
