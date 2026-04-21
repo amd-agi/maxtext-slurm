@@ -19,8 +19,11 @@ run_name: "llama3_405B_40L_training_2n"
 hardware: "gpu"
 model_name: "llama3.1-405b"
 
-# Override 405B depth: 126 → 40 layers so optimizer state fits HBM on 2N.
-base_num_decoder_layers: 40
+# NOTE: base_num_decoder_layers cannot be overridden from the user YAML — the
+# model registry (configs/models/llama3.1-405b.yml) takes precedence. It must
+# be passed as a CLI passthrough arg instead, e.g.
+#   ./submit.sh 405b-40L-2n:... -- base_num_decoder_layers=40 ...
+# The submit helper below (or the invocation docs) should include it.
 
 # ── Training ─────────────────────────────────────────────────────────────────
 steps: 15
