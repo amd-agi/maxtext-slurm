@@ -300,7 +300,7 @@ CONTAINER_NAME="maxtext-slurm-${JOB_ID}-node${NODE_RANK}"
 # container's own AINIC driver or bind-mount the host's, because the plugin
 # .so is baked into the image at /workspace/amd-anp/build/librccl-anp.so.
 IB_MOUNT_OPTIONS=(
-    -e NCCL_NET_PLUGIN=/workspace/amd-anp/build/librccl-anp.so
+    # -e NCCL_NET_PLUGIN=/workspace/amd-anp/build/librccl-anp.so  # uncomment for WithANP
 )
 if [[ "$USE_DOCKER_IMAGE_AINIC_DRIVER" == "true" ]] || [[ "$MODE" == "interactive" ]]; then
     : # container's built-in AINIC driver is already in the image
