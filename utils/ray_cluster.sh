@@ -196,10 +196,15 @@ if [[ "$1" == "dump" || "$1" == "record" ]]; then
     # but the training code runs in a subprocess (mfu_tracker.py).  Targeting
     # the child directly is faster and far more reliable than traversing the
     # worker's thread-heavy process tree.
+    #
+    # In 1-GPU-per-process mode the actor has multiple children (one per GPU).
+    # Set PYSPY_LOCAL_RANK=N to pick the Nth child (default: 0, i.e. rank 0).
     ARGS=("$@")
+    TARGET_RANK="${PYSPY_LOCAL_RANK:-0}"
     for ((i=0; i<${#ARGS[@]}; i++)); do
         if [[ "${ARGS[$i]}" == "-p" && -n "${ARGS[$((i+1))]}" ]]; then
-            CHILD=$(pgrep -P "${ARGS[$((i+1))]}" 2>/dev/null | head -1)
+            # sed -n "Np" picks the Nth line (1-indexed), so add 1.
+            CHILD=$(pgrep -P "${ARGS[$((i+1))]}" 2>/dev/null | sed -n "$((TARGET_RANK+1))p")
             [[ -n "$CHILD" ]] && ARGS[$((i+1))]="$CHILD"
             break
         fi

@@ -135,14 +135,19 @@ The server auto-detects a free port starting from 8080 and auto-reloads `analysi
   analysis.json                                 # structured metrics
   xla_dump/                                     # if _env_ENABLE_XLA_DUMP=1
     module_NNNN.jit_train_step.*_gpu_after_optimizations.txt
-  <run_name>/tensorboard/plugins/profile/<ts>/
-    <hostname>.xplane.pb                        # if profiler=xplane
-  tracelens/<ts>/csvs/*.csv                     # created by TraceLens
+  <run_name>/tensorboard/plugins/profile/<ts>/  # if profiler=xplane
+    <hostname>.xplane.pb                        #   1-node/proc: one per host
+  <run_name>/tensorboard/plugins/profile/<ts_i>/ # 1-GPU/proc (LOCAL_WORLD_SIZE ts dirs,
+    <hostname>.proc<N>.xplane.pb                #   one file per host per ts;
+                                                #   successive serialized writes land
+                                                #   in different per-second ts dirs)
+  tracelens/<ts>/csvs/*.csv                     # 1-node/proc: TraceLens output
+  tracelens/<ts_i>/<hostname>.proc<N>/csvs/*.csv # 1-GPU/proc: one dir per GPU
 ```
 
 The `.log` file sits alongside the directory in `<JOB_WORKSPACE>/`.
 
-When `enable_checkpointing=true`, profiler traces may end up in a shared directory outside the job dir. `analyze_job.py` parses `Config param tensorboard_dir` from the log to locate these. The dispatcher and `perf_server.py` filter profiles by job execution time window and node-0 hostname to disambiguate.
+When `enable_checkpointing=true`, profiler traces may end up in a shared directory outside the job dir. `analyze_job.py` parses `Config param tensorboard_dir` from the log to locate these. The dispatcher and `perf_server.py` filter profiles by job execution time window and node-0 hostname to disambiguate. In 1-GPU-per-process mode the node-0 filter `name.startswith("<host>.")` still matches all `<host>.proc<N>.xplane.pb` files, so TraceLens runs once per GPU on node 0; the multiple timestamp dirs (one per serialized write) are treated like periodic-profiling windows by the existing code.
 
 ### Running individual tools directly
 

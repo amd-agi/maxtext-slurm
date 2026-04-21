@@ -47,6 +47,11 @@ class MaxTextTrainerActor:
     def run_training(self, argv: list, env_vars: dict) -> int:
         """Launch training in a subprocess and wait for result.
 
+        In 1-GPU-per-process mode (``ONE_GPU_PER_PROCESS=true``), fans out
+        to ``LOCAL_WORLD_SIZE`` subprocesses per node (one per GPU), each
+        with its own ``LOCAL_RANK`` / ``GLOBAL_RANK`` / ``NPROCS``. Mirrors
+        the fan-out that ``_train.sh`` does in the non-Ray path.
+
         Uses subprocess.Popen with env=env_vars to give the training process
         a clean environment (exactly what _train.sh exported) with no Ray
         thread contamination.  stdout/stderr are inherited from the actor
@@ -64,6 +69,9 @@ class MaxTextTrainerActor:
         # Ensure PYTHONUNBUFFERED is set for real-time log streaming
         launch_env = dict(env_vars)
         launch_env["PYTHONUNBUFFERED"] = "1"
+
+        if launch_env.get("ONE_GPU_PER_PROCESS", "").lower() == "true":
+            return self._fan_out_one_gpu_per_proc(cmd, launch_env)
 
         print(f"{self.tag} Launching training subprocess: {' '.join(cmd[:3])} ...",
               flush=True)
@@ -93,6 +101,30 @@ class MaxTextTrainerActor:
             print(f"{self.tag} Training subprocess exited with code "
                   f"{p.returncode}", flush=True)
         return p.returncode
+
+    def _fan_out_one_gpu_per_proc(self, cmd: list, launch_env: dict) -> int:
+        """Launch one subprocess per local GPU; return first non-zero exit code."""
+        local_world_size = int(launch_env["LOCAL_WORLD_SIZE"])
+        nprocs = int(launch_env["NPROCS"])
+        print(f"{self.tag} 1-GPU/proc: launching {local_world_size} "
+              f"subprocesses (nprocs={nprocs})", flush=True)
+
+        procs = []
+        for i in range(local_world_size):
+            penv = dict(launch_env)
+            penv["LOCAL_RANK"] = str(i)
+            penv["GLOBAL_RANK"] = str(self.node_rank * local_world_size + i)
+            p = subprocess.Popen(cmd, env=penv, cwd=launch_env.get("PWD") or None)
+            print(f"{self.tag}   proc {i}/{local_world_size} "
+                  f"pid={p.pid} GLOBAL_RANK={penv['GLOBAL_RANK']}", flush=True)
+            procs.append(p)
+
+        first_nonzero = 0
+        for p in procs:
+            p.wait()
+            if p.returncode != 0 and first_nonzero == 0:
+                first_nonzero = p.returncode
+        return first_nonzero
 
 
 # ---------------------------------------------------------------------------
