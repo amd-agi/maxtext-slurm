@@ -296,23 +296,24 @@ CONTAINER_NAME="maxtext-slurm-${JOB_ID}-node${NODE_RANK}"
 "${DOCKER_CMD[@]}" rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
 # NOTE: All IB/ANP-related mount options go here!
+# ANP plugin toggle (2N repro branch): set regardless of whether we use the
+# container's own AINIC driver or bind-mount the host's, because the plugin
+# .so is baked into the image at /workspace/amd-anp/build/librccl-anp.so.
+IB_MOUNT_OPTIONS=(
+    -e NCCL_NET_PLUGIN=/workspace/amd-anp/build/librccl-anp.so
+)
 if [[ "$USE_DOCKER_IMAGE_AINIC_DRIVER" == "true" ]] || [[ "$MODE" == "interactive" ]]; then
-    IB_MOUNT_OPTIONS=(
-        # ANP enabled (2N repro branch). Points at the vanilla ANP lib path
-        # shared by jobs 9501/9511/9512 for apples-to-apples comparison.
-        -e NCCL_NET_PLUGIN=/workspace/amd-anp/build/librccl-anp.so
-    )
+    : # container's built-in AINIC driver is already in the image
 else
     # Detect and configure host IB-related mounts (bnxt_re or ionic driver present on host)
     if [[ -e "/etc/libibverbs.d/bnxt_re.driver" ]] || [[ -e "/etc/libibverbs.d/ionic.driver" ]]; then
         echo "Detected IB driver on host (bnxt_re/ionic): enabling /etc/libibverbs.d mounts."
-        IB_MOUNT_OPTIONS=(
+        IB_MOUNT_OPTIONS+=(
             -v /etc/libibverbs.d:/etc/libibverbs.d:ro
             -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
         )
     else
         echo "No /etc/libibverbs.d/bnxt_re.driver or ionic.driver found: disabling IB mounts."
-        IB_MOUNT_OPTIONS=()
     fi
 fi
 
