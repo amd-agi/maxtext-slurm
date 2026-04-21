@@ -25,7 +25,7 @@ fi
 # Has MaxText installed at /workspace/maxtext with the standard pip layout so
 # `from MaxText import train` works out-of-the-box.
 DOCKER_IMAGE="${DOCKER_IMAGE:-/mnt/vast/qiangh/docker_images/jax-training-maxtext-v26.2-with-primus-turbo-conv-fix-v2.tar}"
-USE_DOCKER_IMAGE_AINIC_DRIVER="${USE_DOCKER_IMAGE_AINIC_DRIVER:-true}"    # Use the container's built-in AINIC driver; set to false to bind-mount host IB libs instead (needed when container libionic1 mismatches host firmware)
+USE_DOCKER_IMAGE_AINIC_DRIVER="${USE_DOCKER_IMAGE_AINIC_DRIVER:-false}"    # Must be false on deepep-a77: nodes run a-77 firmware but the container's built-in libionic1 (image built ~3/29) doesn't match, so NCCL can't find /sys/class/infiniband/ionic_* and falls back to TCP (100s/step). Bind-mounting host /etc/libibverbs.d + /usr/lib/x86_64-linux-gnu lets NCCL load the host's ionic.driver → real RDMA.
 MAXTEXT_REPO_DIR="${MAXTEXT_REPO_DIR:-/workspace/maxtext}"  # MaxText location inside the container
 MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH:-}"            # Global patch branch (empty = image default); per-model .env.sh can override
 # ── end Docker image ──────────────────────────────────────────────────────────
