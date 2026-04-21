@@ -298,8 +298,9 @@ CONTAINER_NAME="maxtext-slurm-${JOB_ID}-node${NODE_RANK}"
 # NOTE: All IB/ANP-related mount options go here!
 if [[ "$USE_DOCKER_IMAGE_AINIC_DRIVER" == "true" ]] || [[ "$MODE" == "interactive" ]]; then
     IB_MOUNT_OPTIONS=(
-        # NOTE: has no effect unless ANP is installed in the container
-#        -e NCCL_NET_PLUGIN=librccl-anp.so
+        # ANP enabled (2N repro branch). Points at the vanilla ANP lib path
+        # shared by jobs 9501/9511/9512 for apples-to-apples comparison.
+        -e NCCL_NET_PLUGIN=/workspace/amd-anp/build/librccl-anp.so
     )
 else
     # Detect and configure host IB-related mounts (bnxt_re or ionic driver present on host)
