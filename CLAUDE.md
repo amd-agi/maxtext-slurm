@@ -3,6 +3,7 @@ When you need to run host-level commands (like `squeue`, `sbatch`, `sinfo`, `sca
 **CAUTION**: This might be a shared cluster. NEVER `scancel` other users' jobs. Job owner fields are unreliable (e.g. all jobs show as `root`). To tell if a job is yours: check if a directory for that job ID exists under `outputs/`. If it does, the job is yours and you can cancel it. If not, it belongs to someone else — do not touch it.
 
 For performance analysis tasks, follow the instructions in `skills/performance-analysis/SKILL.md`.
+For per-kernel drill-down from xplane traces (`input_scatter_fusion`, `RaggedAllToAllKernelImpl`, step-time composition, main-stream-blocking analysis, cross-variant kernel comparison), follow `skills/profile-drill/SKILL.md`.
 For job triage tasks (failed, hanging, or running jobs), follow the instructions in `skills/job-log-triage/SKILL.md`.
 For TSDB diagnosis tasks (metrics queries, GPU/network health, incident root cause), follow the instructions in `skills/tsdb-diagnosis/SKILL.md`.
 For coredump debugging (GDB analysis, source code identification, crash root cause from core files), follow the instructions in `skills/coredump-debug/SKILL.md`.

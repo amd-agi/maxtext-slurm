@@ -9,6 +9,8 @@ Post-training (or mid-training) analysis pipeline. Follow the workflow below fro
 
 **Multi-job comparisons:** If comparing two or more jobs (e.g., "why is job B slower than job A?"), start with `skills/tsdb-diagnosis/SKILL.md` (Multi-Job Comparison workflow) **before** running TraceLens. The TSDB reveals system-level root causes — CPU contention from RCCL resource leaks, network errors, I/O pressure, thermal throttling — that TraceLens cannot observe (it only sees GPU-side kernel timings). Only proceed to TraceLens here if the TSDB comparison is inconclusive.
 
+**Deep per-kernel analysis:** When the user asks for per-kernel time breakdowns, step-time composition tables, cross-variant kernel comparisons, or whether a specific kernel is main-stream-blocking — switch to `skills/profile-drill/SKILL.md`. TraceLens's `kernel_launchers_summary_by_category.csv` has a known ~1.5×–2× inflation bug on 1-node/proc profiles (the `time ms per gpu` column divides by host count, not GPU count). `profile-drill` uses `utils/profile_drill.py` to read the raw xplane trace JSONs directly and avoids this bias.
+
 ## Workflow
 
 ### Step 1: Run the dispatcher
@@ -90,6 +92,8 @@ For deeper TraceLens analysis, read the CSVs in `<job_dir>/tracelens/<timestamp>
 - `kernel_launchers_summary_by_category.csv` — time by kernel category (GEMM, NCCL, XLA fusions, etc.)
 - `kernel_launchers_summary.csv` — time by individual kernel name
 
+> ⚠️ **TraceLens per-GPU CSV bias on 1-node/proc.** The `time ms per gpu` column in the two `kernel_launchers_summary*.csv` files divides total kernel time by **host count** (typically 8), not GPU count (typically 64) — so per-GPU numbers are ~1.5×–2× inflated on 1-node/proc profiles.  Percentages and category rankings are fine; absolute per-GPU kernel times are not.  For kernel-time numbers you can cite (e.g. in a report or step-time composition table), use `skills/profile-drill/SKILL.md` instead — it reads raw xplane trace JSONs and divides by auto-detected GPUs.
+
 ### Step 4: Summarize findings
 
 Present results using this structure:
@@ -167,6 +171,11 @@ utils/IRLens_analyze_hlo_ir.py <hlo_file> --op computation
 TraceLens_generate_perf_report_jax \
     --profile_path <xplane.pb> \
     --output_csvs_dir <output_dir>/csvs
+
+# profile_drill.py — direct per-kernel analysis from trace JSONs
+# (use when TraceLens's per-GPU numbers are suspect or you need kernel-level
+# ground truth; see skills/profile-drill/SKILL.md)
+utils/profile_drill.py <job_dir>/.../tensorboard/plugins/profile/*/*.trace.json.gz
 ```
 
 ### `RAY=1` Slurm log truncation
