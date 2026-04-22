@@ -7,6 +7,7 @@ Structured instructions for AI agents. Each skill encodes the methodology from v
 | Skill | Trigger |
 |-------|---------|
 | [performance-analysis](performance-analysis/SKILL.md) | "analyze job", "TGS", "TraceLens", "IRLens", profiling tasks |
+| [profile-drill](profile-drill/SKILL.md) | "xplane", "per-kernel breakdown", "step-time composition", "main-stream-busy", "input_scatter_fusion", "RaggedAllToAllKernelImpl", cross-variant kernel comparison, TraceLens CSV off by 1.5–2× |
 | [job-log-triage](job-log-triage/SKILL.md) | "triage", "diagnose", "why did job fail", "is the job hanging", crash/hang/timeout/OOM/NCCL errors, job status |
 | [tsdb-diagnosis](tsdb-diagnosis/SKILL.md) | "diagnose with TSDB", "check GPU health", "check network", "query prometheus", "metrics", incident root cause analysis |
 | [coredump-debug](coredump-debug/SKILL.md) | "coredump", "core file", "SIGSEGV", "segfault", "crash dump", GDB backtrace analysis, crash root cause |
