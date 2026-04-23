@@ -182,7 +182,7 @@ export NCCL_GDRCOPY_ENABLE=1
 export NCCL_GDR_FLUSH_DISABLE=1
 export NCCL_IB_ECE_ENABLE=0
 # NOTE: NCCL_IB_TC and NCCL_IB_FIFO_TC are auto-detected above (see utils/detect_nccl_env.sh).
-export NCCL_IB_GID_INDEX=1
+export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-1}"
 export NCCL_IB_PCI_RELAXED_ORDERING=1
 export NCCL_IB_USE_INLINE=1
 export NCCL_IGNORE_CPU_AFFINITY=1
