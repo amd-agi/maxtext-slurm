@@ -1,13 +1,13 @@
 ---
 name: coredump-debug
-description: Debug segfaults and crashes in JAX/XLA/ROCm training workloads using coredump analysis. Use when the user has a coredump file, SIGSEGV, segfault, crash dump, or core file to analyze. Covers GDB backtrace extraction, identifying the crash cause from registers and disassembly, finding and cloning the correct source code versions, and reading the relevant code to determine the root cause.
+description: "Debug segfaults and crashes in JAX/XLA/ROCm training workloads using coredump analysis. Use when the user has a coredump file, SIGSEGV, segfault, crash dump, or core file to analyze. Covers GDB backtrace extraction, identifying the crash cause from registers and disassembly, finding and cloning the correct source code versions, and reading the relevant code to determine the root cause."
 ---
 
 # Coredump Debugging for JAX/XLA/ROCm
 
 Systematic workflow for analyzing coredumps from GPU training workloads. Produces: crash call chain, root cause hypothesis, and the exact source lines responsible.
 
-**Important**: Coredumps capture the crash symptom, not necessarily the root cause. A common pattern in GPU workloads: a **data race** silently corrupts memory during normal operation, and the corruption only manifests as a crash much later (e.g., during exit cleanup). If the crash is **non-deterministic** (e.g., ~2% repro rate), suspect a data race or thread-safety bug — the coredump shows where the corrupted data was *read*, but the *write* that caused corruption happened earlier. ASAN/TSAN may be needed to find the actual root cause.
+**Important**: Coredumps capture the crash symptom, not necessarily the root cause. Non-deterministic crashes (~2% repro) often indicate data races — the coredump shows where corrupted data was *read*, but the *write* happened earlier. ASAN/TSAN may be needed to find the actual root cause.
 
 ## Step 0: Determine if the Crash is Deterministic
 
@@ -228,11 +228,7 @@ Focus on:
 | **NULL deref** | `rdi=0x0`, `rax=0x0` before a `mov` through pointer | ~100% |
 | **Stack overflow** | Thousands of recursive frames, `rsp` near stack limit | ~100% |
 
-**Data race red flags in the coredump:**
-- Pointer values that are valid addresses but **misaligned** (e.g., `0x73a330f14c3e` — not 8-byte aligned for a pointer field)
-- Hash map / vector internal pointers that look like small integers (e.g., `__end = 0x226`)
-- The crash is in a container's internal function (`_M_insert_bucket_begin`, `_M_deallocate_node`)
-- Multiple threads were executing the same code path (check `thread apply all bt`)
+**Data race red flags**: misaligned pointers (e.g., `0x73a330f14c3e`), container internals as small integers (`__end = 0x226`), crashes in `_M_insert_bucket_begin` / `_M_deallocate_node`, multiple threads in the same code path.
 
 ### 4.3 Trace the data lifecycle
 
@@ -307,28 +303,6 @@ For data races: misaligned pointers, corrupted container internals, lock analysi
 - For upstream fix available: cherry-pick or upgrade path>
 ```
 
-## Quick Reference: GDB Commands for Coredumps
+## Quick Reference
 
-| Command | Purpose |
-|---|---|
-| `bt full` | Full backtrace with local variables |
-| `frame N` | Switch to frame N |
-| `info locals` | Show local variables in current frame |
-| `info registers` | Show CPU registers |
-| `info threads` | List all threads |
-| `thread N` | Switch to thread N |
-| `thread apply all bt` | Backtrace for every thread |
-| `x/10i $rip` | Disassemble 10 instructions at crash point |
-| `x/s ADDR` | Print string at address |
-| `p expr` | Evaluate expression |
-| `info proc mappings` | Show library load addresses |
-
-## Quick Reference: Crash Exit Codes
-
-| Exit Code | Signal | Meaning |
-|---|---|---|
-| 139 | SIGSEGV (11) | Segmentation fault (invalid memory access) |
-| 134 | SIGABRT (6) | Abort (assertion failure, double free) |
-| 136 | SIGFPE (8) | Floating point exception (division by zero) |
-| 137 | SIGKILL (9) | Killed (OOM killer, timeout) |
-| 138 | SIGBUS (7) | Bus error (misaligned access, bad mmap) |
+See [references/quick-reference.md](references/quick-reference.md) for GDB commands and crash exit codes.
