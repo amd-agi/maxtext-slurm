@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DeepEP Loss Comparison</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 32px;
+      color: #222;
+      background: #fff;
+    }
+    h1 { margin-bottom: 4px; }
+    h2 { margin-top: 32px; }
+    .subtitle { color: #666; margin-top: 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 20px 0;
+    }
+    .stat {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fafafa;
+    }
+    .stat .value {
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .stat .label {
+      color: #666;
+      font-size: 13px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 7px 9px;
+      text-align: left;
+    }
+    th {
+      background: #f3f3f3;
+    }
+    .chart {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 12px 0 24px;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      display: inline-block;
+    }
+    .note {
+      color: #555;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <h1>DeepEP Training Correctness: Loss Comparison</h1>
+  <p class="subtitle">deepseek3-671b-proxy, 1 node / 8x MI355X, pdbs=4, synthetic, 15 steps</p>
+
+  <div class="grid">
+    <div class="stat">
+      <div class="value">0.002</div>
+      <div class="label">Max |delta| dense vs DeepEP (14206)</div>
+    </div>
+    <div class="stat">
+      <div class="value">0.003</div>
+      <div class="label">Max |delta| dense vs DeepEP + 1g1p (14207)</div>
+    </div>
+    <div class="stat">
+      <div class="value">~24%</div>
+      <div class="label">DeepEP throughput uplift vs sparse non-DeepEP</div>
+    </div>
+  </div>
+
+  <h2>Loss Curve</h2>
+  <div class="chart">
+    <svg id="lossChart" width="980" height="360" viewBox="0 0 980 360"></svg>
+    <div id="lossLegend" class="legend"></div>
+  </div>
+
+  <h2>Zoomed Loss Curve: Steps 8-14</h2>
+  <div class="chart">
+    <svg id="lossZoomChart" width="980" height="300" viewBox="0 0 980 300"></svg>
+    <div id="lossZoomLegend" class="legend"></div>
+  </div>
+
+  <h2>Throughput Curve</h2>
+  <p class="subtitle">Tokens/s/device. Step 0 is shown but should be treated as compile/warmup.</p>
+  <div class="chart">
+    <svg id="tgsChart" width="980" height="340" viewBox="0 0 980 340"></svg>
+    <div id="tgsLegend" class="legend"></div>
+  </div>
+
+  <h2>Summary</h2>
+  <table id="summaryTable"></table>
+
+  <h2>Per-Step Loss</h2>
+  <table id="lossTable"></table>
+
+  <h2>Notes</h2>
+  <p class="note">
+    All sparse / DeepEP variants produce loss within BF16-level numerical noise of the dense baseline.
+    ONE_GPU_PER_PROCESS does not materially change loss. DeepEP improves steady-state TGS from about
+    5270 to about 6530 tokens/s/device while preserving the loss curve.
+  </p>
+
+  <script>
+    const steps = Array.from({ length: 15 }, (_, i) => i);
+    const runs = [
+      {
+        jobId: 14191, tag: "Baseline", label: "dense cf1.25",
+        color: "#1f77b4",
+        loss: [12.265,12.265,11.487,10.816,10.148,9.506,8.908,8.401,7.935,7.551,7.381,7.240,7.135,7.095,7.064],
+        tgs:  [274,5791,6231,6251,6237,6233,6222,6228,6218,6223,6222,6222,6222,6221,6211],
+      },
+      {
+        jobId: 14208, tag: "Case 1", label: "dense cf1.25 + 1g1p",
+        color: "#ff7f0e",
+        loss: [12.265,12.265,11.487,10.816,10.149,9.506,8.908,8.401,7.935,7.551,7.381,7.240,7.136,7.095,7.064],
+        tgs:  [796,5802,6248,6262,6258,6247,6244,6239,6233,6230,6227,6228,6229,6222,6231],
+      },
+      {
+        jobId: 14209, tag: "Case 2", label: "sparse + tgmm",
+        color: "#2ca02c",
+        loss: [12.265,12.265,11.486,10.815,10.147,9.505,8.906,8.399,7.934,7.549,7.378,7.238,7.133,7.092,7.061],
+        tgs:  [265,4972,5249,5260,5255,5263,5268,5268,5258,5269,5261,5272,5262,5262,5266],
+      },
+      {
+        jobId: 14205, tag: "Case 3", label: "sparse + tgmm + 1g1p",
+        color: "#d62728",
+        loss: [12.265,12.265,11.486,10.815,10.147,9.505,8.906,8.399,7.933,7.549,7.378,7.238,7.133,7.092,7.061],
+        tgs:  [733,4983,5263,5271,5263,5282,5287,5298,5280,5288,5264,5291,5289,5291,5290],
+      },
+      {
+        jobId: 14206, tag: "Case 4", label: "sparse + tgmm + deepep",
+        color: "#9467bd",
+        loss: [12.265,12.265,11.486,10.815,10.147,9.505,8.906,8.399,7.933,7.549,7.378,7.238,7.133,7.092,7.062],
+        tgs:  [292,6000,6492,6523,6518,6521,6532,6533,6526,6535,6533,6533,6530,6534,6533],
+      },
+      {
+        jobId: 14207, tag: "Case 5", label: "sparse + tgmm + deepep + 1g1p",
+        color: "#8c564b",
+        loss: [12.265,12.265,11.486,10.815,10.147,9.505,8.906,8.399,7.934,7.549,7.378,7.238,7.133,7.092,7.061],
+        tgs:  [935,4692,6520,6527,6521,6537,6544,6540,6539,6541,6543,6548,6548,6543,6545],
+      },
+    ];
+
+    function maxDelta(a, b) {
+      return Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+    }
+
+    function avg(xs) {
+      return xs.reduce((a, b) => a + b, 0) / xs.length;
+    }
+
+    function drawLineChart(svgId, legendId, series, xLabels, accessor, yLabel) {
+      const svg = document.getElementById(svgId);
+      const width = 980, height = Number(svg.getAttribute("height"));
+      const margin = { left: 56, right: 18, top: 18, bottom: 42 };
+      const innerW = width - margin.left - margin.right;
+      const innerH = height - margin.top - margin.bottom;
+      const values = series.flatMap(r => accessor(r));
+      const yMin = Math.min(...values);
+      const yMax = Math.max(...values);
+      const pad = (yMax - yMin) * 0.08 || 1;
+      const ymin = yMin - pad;
+      const ymax = yMax + pad;
+      const x = i => margin.left + (innerW * i) / (xLabels.length - 1);
+      const y = v => margin.top + innerH - ((v - ymin) / (ymax - ymin)) * innerH;
+
+      svg.innerHTML = "";
+      function add(name, attrs, text) {
+        const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+        Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, v));
+        if (text != null) el.textContent = text;
+        svg.appendChild(el);
+        return el;
+      }
+
+      add("rect", { x: 0, y: 0, width, height, fill: "#fff" });
+      for (let i = 0; i <= 4; i++) {
+        const yy = margin.top + (innerH * i) / 4;
+        const val = ymax - ((ymax - ymin) * i) / 4;
+        add("line", { x1: margin.left, x2: width - margin.right, y1: yy, y2: yy, stroke: "#e6e6e6" });
+        add("text", { x: 8, y: yy + 4, fontSize: 11, fill: "#666" }, val.toFixed(yLabel === "loss" ? 2 : 0));
+      }
+      xLabels.forEach((label, i) => {
+        const xx = x(i);
+        add("line", { x1: xx, x2: xx, y1: margin.top, y2: height - margin.bottom, stroke: "#f1f1f1" });
+        add("text", { x: xx, y: height - 16, fontSize: 11, fill: "#666", textAnchor: "middle" }, String(label));
+      });
+      add("line", { x1: margin.left, x2: margin.left, y1: margin.top, y2: height - margin.bottom, stroke: "#999" });
+      add("line", { x1: margin.left, x2: width - margin.right, y1: height - margin.bottom, y2: height - margin.bottom, stroke: "#999" });
+
+      series.forEach(run => {
+        const vals = accessor(run);
+        const points = vals.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+        add("polyline", { points, fill: "none", stroke: run.color, "stroke-width": 2 });
+        vals.forEach((v, i) => add("circle", { cx: x(i), cy: y(v), r: 2.5, fill: run.color }));
+      });
+
+      const legend = document.getElementById(legendId);
+      legend.innerHTML = series.map(r => (
+        `<span class="legend-item"><span class="swatch" style="background:${r.color}"></span>${r.tag}: ${r.label}</span>`
+      )).join("");
+    }
+
+    function renderTables() {
+      const baseline = runs[0];
+      const summary = document.getElementById("summaryTable");
+      summary.innerHTML = [
+        "<tr><th>Job</th><th>Tag</th><th>Config</th><th>Final loss</th><th>Max |delta| vs baseline</th><th>Avg TGS (steps 2-14)</th></tr>",
+        ...runs.map(r => `<tr><td>${r.jobId}</td><td>${r.tag}</td><td>${r.label}</td><td>${r.loss.at(-1).toFixed(3)}</td><td>${maxDelta(baseline.loss, r.loss).toFixed(3)}</td><td>${Math.round(avg(r.tgs.slice(2)))}</td></tr>`),
+      ].join("");
+
+      const loss = document.getElementById("lossTable");
+      loss.innerHTML = [
+        `<tr><th>Step</th>${runs.map(r => `<th>${r.tag}</th>`).join("")}</tr>`,
+        ...steps.map((s, i) => `<tr><td>${s}</td>${runs.map(r => `<td>${r.loss[i].toFixed(3)}</td>`).join("")}</tr>`),
+      ].join("");
+    }
+
+    drawLineChart("lossChart", "lossLegend", runs, steps, r => r.loss, "loss");
+    drawLineChart("lossZoomChart", "lossZoomLegend", runs, steps.slice(8), r => r.loss.slice(8), "loss");
+    drawLineChart("tgsChart", "tgsLegend", runs, steps, r => r.tgs, "tgs");
+    renderTables();
+  </script>
+</body>
+</html>
