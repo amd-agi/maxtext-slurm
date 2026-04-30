@@ -25,6 +25,12 @@ ici_tensor_parallelism: 1
 ici_pipeline_parallelism: 1
 ici_expert_parallelism: 8
 
+# Used only when dcn_pipeline_parallelism > 1.  56 = 7 × 8 makes the
+# 58-decoder-layer DS3 divide cleanly into 8 PP stages × V=7 chunks of 1
+# layer each, with the 2 leftover layers run unpipelined.  Harmless when
+# PP=1.
+pipeline_parallel_layers: 56
+
 # ── Batch & Sequence ─────────────────────────────────────────────────────────
 per_device_batch_size: 16
 max_target_length: 4096
@@ -49,10 +55,10 @@ sparse_matmul: False
 capacity_factor: 1.25
 
 # ── Profiler ─────────────────────────────────────────────────────────────────
-profiler: "" #"xplane"
+profiler: ""
 upload_all_profiler_results: true
-skip_first_n_steps_for_profiler: 3
-profiler_steps: 1
+skip_first_n_steps_for_profiler: 5
+profiler_steps: 3
 
 # ── Checkpointing ────────────────────────────────────────────────────────────
 enable_checkpointing: False
