@@ -13,6 +13,7 @@ Structured instructions for AI agents. Each skill encodes the methodology from v
 | [coredump-debug](coredump-debug/SKILL.md) | "coredump", "core file", "SIGSEGV", "segfault", "crash dump", GDB backtrace analysis, crash root cause |
 | [model-config-guide](model-config-guide/SKILL.md) | "add model", "create config", "model config", ".gpu.yml", parallelism, batch size, quantization, OOM tuning |
 | [batch-sweep](batch-sweep/SKILL.md) | "sweep", "find optimal batch size", "tune TGS", "benchmark throughput", "maximize tokens per second" |
+| [xla-tuning](xla-tuning/SKILL.md) | "tune XLA flags", "tune NCCL", "find best collective-permute / all-gather threshold", "optimize FSDP/PP/TP", "close parallelism throughput gap", "cross-iteration prefetch" / "overlap-limit" / "async-stream-priority" sweeps for one (model × parallelism) cell |
 | [docker-artifact-check](docker-artifact-check/SKILL.md) | "check container", "software versions", "git hashes", "what's in the image", Docker/ROCm/JAX artifact inventory |
 | [telegram](telegram/SKILL.md) | "notify me", "send TG message", "alert when done", "wait for TG reply", "Telegram", cross-cutting I/O channel with REPL mode for any skill |
 
