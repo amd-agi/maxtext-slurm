@@ -9,6 +9,7 @@ For TSDB diagnosis tasks (metrics queries, GPU/network health, incident root cau
 For coredump debugging (GDB analysis, source code identification, crash root cause from core files), follow the instructions in `skills/coredump-debug/SKILL.md`.
 For model config tasks (adding a model, creating .gpu.yml configs, parallelism, batch size, quantization), follow the instructions in `skills/model-config-guide/SKILL.md`.
 For batch size sweeps (find optimal TGS, benchmark throughput, tune per_device_batch_size), follow the instructions in `skills/batch-sweep/SKILL.md`.
+For XLA / NCCL flag tuning of a single (model × parallelism) cell (collective-permute decomposer, all-gather combine threshold, overlap-limit, async-stream priority, cross-iteration prefetch knobs), follow the instructions in `skills/xla-tuning/SKILL.md`.
 For Docker container artifact checks (software versions, git hashes, source code inventory), follow the instructions in `skills/docker-artifact-check/SKILL.md`.
 For Telegram as I/O channel and REPL mode (notify me, send TG message, alert when done, wait for TG reply), follow the instructions in `skills/telegram/SKILL.md`.
 
