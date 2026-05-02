@@ -9,6 +9,7 @@
   - [yihuang/moe-turbo-gmm-and-deepep-v2](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v2) @ `627168f8` (single commit on baseline — `sparse-gmm-deepep-v2` column)
   - [yihuang/moe-turbo-gmm-and-deepep-v3](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v3) @ `f59be3c9` (two commits on baseline — `sparse-gmm-deepep-v3` column)
 - **Base config:** [`configs/deepseek3-671b.gpu.yml`](configs/deepseek3-671b.gpu.yml)
+- **Dataset:** `dataset_type=synthetic` (the gpu.yml default at sweep time; the yml has since switched to `grain`/c4 — to reproduce, CLI-override `dataset_type=synthetic`).
 - **Peak BF16:** ≈ 2500 TFLOP/s/device → MFU ≈ TFLOP/25
 
 ## Background

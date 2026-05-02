@@ -6,7 +6,8 @@
 - **Image:** [`/mnt/vast/yihuang/ppfix-hangfix-deepep-gmm-maxtext-v26.2.tar`](https://github.com/ROCm/Primus-Turbo) (axis-aware Primus-Turbo batching rules for `nn.vmap("stage")`-of-`shard_map` composition + upstream [`fix/deepep/combine_hang`](https://github.com/AMD-AGI/Primus-Turbo/tree/fix/deepep/combine_hang) C++ kernel fix)
 - **MaxText branch** (sgd configs only): [`yihuang/moe-turbo-gmm-and-deepep-v3`](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v3) @ `f59be3c9` — also the `container_env.sh` default since 2026-04-30, so `sgd-v3` runs no longer need an explicit `MAXTEXT_PATCH_BRANCH=…` env-var prefix. v1/v2 baselines still need explicit overrides.
 - **Base config:** [`configs/deepseek3-671b.gpu.yml`](configs/deepseek3-671b.gpu.yml). PP=8 passthrough adds `dcn_pipeline_parallelism=8 dcn_fsdp_parallelism=1` (MaxText auto-derives `num_layers_per_pipeline_stage=1`, `num_pipeline_microbatches=8` from `pipeline_parallel_layers=56`).
-- **Sequence length:** 4096. **Steps:** 15 (synthetic data). All numbers are **steady-state averages over steps 9-14** unless noted; clean (`profiler: ""`, no XLA dump) where indicated.
+- **Sequence length:** 4096. **Steps:** 15. All numbers are **steady-state averages over steps 9-14** unless noted; clean (`profiler: ""`, no XLA dump) where indicated.
+- **Dataset:** `dataset_type=synthetic` (the gpu.yml default at sweep time; the yml has since switched to `grain`/c4 — to reproduce, CLI-override `dataset_type=synthetic` per `skills/xla-tuning`).
 
 ## TL;DR
 

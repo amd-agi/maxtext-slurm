@@ -9,6 +9,7 @@
   - [yihuang/moe-turbo-gmm-and-deepep-v2](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v2) @ `627168f8` (v2 column)
   - [yihuang/moe-turbo-gmm-and-deepep-v3](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v3) @ `f59be3c9` (v3 column — the headline)
 - **Base config:** [`configs/kimi-k2-1t.gpu.yml`](configs/kimi-k2-1t.gpu.yml) (`dcn_fsdp_parallelism=8`, `ici_expert_parallelism=8` on 8-node × 8-GPU topology).
+- **Dataset:** `dataset_type=synthetic` (the gpu.yml default at sweep time; if the current default has since changed, CLI-override `dataset_type=synthetic` to reproduce).
 - **Peak BF16:** ≈ 2500 TFLOP/s/device → MFU ≈ TFLOP/25.
 - **Sweep counterpart:** [`deepseek3-671b-pdbs-sweep.md`](deepseek3-671b-pdbs-sweep.md) — this doc reuses its taxonomy and structure.
 

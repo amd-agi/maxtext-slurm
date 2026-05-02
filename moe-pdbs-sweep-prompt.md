@@ -622,7 +622,7 @@ Common redundancies on MoE benchmark/profile sweeps (save significant EXP_TAG ch
 | Passthrough | Check | Drop if |
 |---|---|---|
 | `steps=15` | `<MODEL_TAG>.gpu.yml → steps` | already `15` (saves 8 chars) |
-| `dataset_type=synthetic` | `<MODEL_TAG>.gpu.yml → dataset_type` | already `"synthetic"` (saves 22 chars) |
+| `dataset_type=synthetic` | `<MODEL_TAG>.gpu.yml → dataset_type` | already `"synthetic"` (saves 22 chars). **Some models' gpu.yml now defaults to `grain` (e.g. `deepseek3-671b`); on those, `dataset_type=synthetic` is a required passthrough — do NOT drop it.** |
 | `skip_first_n_steps_for_profiler=5` | `<MODEL_TAG>.gpu.yml → skip_first_n_steps_for_profiler` | already `≥3` AND any value ≥2 is post-warmup — use the yml default (saves 34 chars) |
 | `profiler_steps=3` | `<MODEL_TAG>.gpu.yml → profiler_steps` | already `3` (saves 16 chars) |
 | `max_target_length=4096` | `<MODEL_TAG>.gpu.yml → max_target_length` | already `4096` (saves 22 chars) |
@@ -630,7 +630,7 @@ Common redundancies on MoE benchmark/profile sweeps (save significant EXP_TAG ch
 | `_env_XLA_PYTHON_CLIENT_MEM_FRACTION=.93` | `train_env.sh → export XLA_PYTHON_CLIENT_MEM_FRACTION=.93` | that's the default (saves 40 chars — only include when overriding to `.96`) |
 | `_env_ENABLE_RAGGED_ONESHOT_KERNEL=0` | `train_env.sh → default 0` | default (saves 34 chars — only include `=1` for the historical `sparse-gmm` row) |
 
-**Concrete profile example** — from kimi-k2-1t (yml has `skip_first_n_steps_for_profiler: 3` / `profiler_steps: 1` / `steps: 15` / `dataset_type: "synthetic"`), the minimal passthrough for `sparse-gmm-deepep-v3 pdbs=4 PROFILE` is:
+**Concrete profile example** — from `kimi-k2-1t` (yml has `skip_first_n_steps_for_profiler: 3` / `profiler_steps: 1` / `steps: 15` / `dataset_type: "synthetic"`), the minimal passthrough for `sparse-gmm-deepep-v3 pdbs=4 PROFILE` is below. Note this exact passthrough does NOT work for `deepseek3-671b` because that yml now defaults to `dataset_type: grain` — adding `dataset_type=synthetic` is mandatory there even though it's redundant on `kimi-k2-1t`:
 
 ```bash
 MAXTEXT_PATCH_BRANCH=yihuang/moe-turbo-gmm-and-deepep-v3 \
@@ -649,7 +649,7 @@ Note what's dropped: `steps=15`, `dataset_type=synthetic`, `skip_first_n_steps_f
 
 ## Dataset
 
-**The autonomous sweep is synthetic-only.** Pass `dataset_type=synthetic`. The sweep only needs steps 5–14 for steady-state TGS measurement; grain/c4 adds data-loading variance, requires a tokenizer-config block in the yml, and isn't relevant for throughput numbers. Real-data validation belongs in the on-demand loss test path below, not the sweep.
+**The autonomous sweep is synthetic-only.** Pass `dataset_type=synthetic` on every submission, regardless of what the model's gpu.yml says. The sweep only needs steps 5–14 for steady-state TGS measurement; grain/c4 adds data-loading variance, and isn't relevant for throughput numbers. (On models whose gpu.yml has been switched to `grain`/c4 — e.g. `deepseek3-671b` — the CLI passthrough overrides the yml; `grain_*` / `tokenizer_*` / `hf_access_token` are silently ignored when `dataset_type=synthetic`.) Real-data validation belongs in the on-demand loss test path below, not the sweep.
 
 For real-data validation of a specific config, see [On-demand loss test](#on-demand-loss-test-user-triggered) below — that's a separate user-triggered task, not part of the autonomous sweep.
 

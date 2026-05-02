@@ -6,7 +6,8 @@
 - **镜像：** [`/mnt/vast/yihuang/ppfix-hangfix-deepep-gmm-maxtext-v26.2.tar`](https://github.com/ROCm/Primus-Turbo)（包含针对 `nn.vmap("stage")`-of-`shard_map` 组合的 axis-aware Primus-Turbo batching 规则 + 上游 [`fix/deepep/combine_hang`](https://github.com/AMD-AGI/Primus-Turbo/tree/fix/deepep/combine_hang) C++ kernel 修复）
 - **MaxText 分支**（仅 sgd 配置使用）：[`yihuang/moe-turbo-gmm-and-deepep-v3`](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v3) @ `f59be3c9` —— 自 2026-04-30 起也是 `container_env.sh` 默认值，因此 `sgd-v3` 运行不再需要显式设置 `MAXTEXT_PATCH_BRANCH=…`。v1/v2 基线仍需要显式覆盖。
 - **基础配置：** [`configs/deepseek3-671b.gpu.yml`](configs/deepseek3-671b.gpu.yml)。PP=8 透传参数加上 `dcn_pipeline_parallelism=8 dcn_fsdp_parallelism=1`（MaxText 自动从 `pipeline_parallel_layers=56` 推导出 `num_layers_per_pipeline_stage=1`、`num_pipeline_microbatches=8`）。
-- **序列长度：** 4096。**步数：** 15（合成数据）。除非另作说明，所有数字都是 **steps 9-14 的稳态平均值**；标注「clean」表示 `profiler: ""`、无 XLA dump。
+- **序列长度：** 4096。**步数：** 15。除非另作说明，所有数字都是 **steps 9-14 的稳态平均值**；标注「clean」表示 `profiler: ""`、无 XLA dump。
+- **数据集：** `dataset_type=synthetic`（扫描时为 gpu.yml 默认值；该 yml 后续已切换为 `grain`/c4 —— 复现时需在 CLI 上覆盖 `dataset_type=synthetic`，详见 `skills/xla-tuning`）。
 
 ## TL;DR
 

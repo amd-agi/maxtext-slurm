@@ -65,4 +65,15 @@ enable_checkpointing: False
 async_checkpointing: False
 
 # ── Dataset ──────────────────────────────────────────────────────────────────
-dataset_type: "synthetic"
+# Real-data default; tokenizer vocab (129280) must match this model. For
+# tuning, CLI-override with `dataset_type=synthetic steps=15`.
+dataset_type: grain
+grain_file_type: parquet
+grain_train_files: /datasets/c4/en/3.0.1/parquet/c4-train-*-of-01024.parquet
+# 1 matches base.yml; see data-loading-deepseek3-671b.md for why not 16.
+grain_worker_count: 1
+tokenizer_type: huggingface
+tokenizer_path: deepseek-ai/DeepSeek-V3-Base
+# Set hf_access_token only if the tokenizer comes from a gated HuggingFace model
+# (e.g. meta-llama/Llama-2-7b). Not needed for public models like DeepSeek-V3-Base.
+hf_access_token: ""

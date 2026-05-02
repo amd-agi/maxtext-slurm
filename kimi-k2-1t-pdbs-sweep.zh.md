@@ -9,6 +9,7 @@
   - [yihuang/moe-turbo-gmm-and-deepep-v2](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v2) @ `627168f8`（v2 列）
   - [yihuang/moe-turbo-gmm-and-deepep-v3](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v3) @ `f59be3c9`（v3 列 —— 核心 headline）
 - **基础配置：** [`configs/kimi-k2-1t.gpu.yml`](configs/kimi-k2-1t.gpu.yml)（`dcn_fsdp_parallelism=8`，`ici_expert_parallelism=8`，8 节点 × 8 GPU 拓扑）。
+- **数据集：** `dataset_type=synthetic`（扫描时为 gpu.yml 默认值；如当前默认值已变更，复现时需在 CLI 上覆盖 `dataset_type=synthetic`）。
 - **峰值 BF16：** ≈ 2500 TFLOP/s/设备 → MFU ≈ TFLOP/25。
 - **姊妹扫描：** [`deepseek3-671b-pdbs-sweep.md`](deepseek3-671b-pdbs-sweep.md) —— 本文沿用其配置分类与结构。
 

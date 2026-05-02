@@ -9,6 +9,7 @@
   - [yihuang/moe-turbo-gmm-and-deepep-v2](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v2) @ `627168f8`（在基线上加 1 个提交 —— `sparse-gmm-deepep-v2` 列）
   - [yihuang/moe-turbo-gmm-and-deepep-v3](https://github.com/ROCm/maxtext/tree/yihuang/moe-turbo-gmm-and-deepep-v3) @ `f59be3c9`（在基线上加 2 个提交 —— `sparse-gmm-deepep-v3` 列）
 - **基础配置：** [`configs/deepseek3-671b.gpu.yml`](configs/deepseek3-671b.gpu.yml)
+- **数据集：** `dataset_type=synthetic`（扫描时为 gpu.yml 默认值；该 yml 后续已切换为 `grain`/c4 —— 复现时需在 CLI 上覆盖 `dataset_type=synthetic`）。
 - **峰值 BF16：** ≈ 2500 TFLOP/s/设备 → MFU ≈ TFLOP/25
 
 ## 背景
