@@ -26,7 +26,7 @@ Each layer communicates with its neighbors through environment variables and cal
 
 ## Axis 1: scheduler (Slurm → Kubernetes, etc.)
 
-**Current state.** Slurm coupling is confined to the orchestration tier: `submit.sh` (calls `sbatch`), `_job.sbatch` (Slurm directives + `srun`), and monitoring utilities (`slurm_job_monitor.sh`, `reservation.sh`). `_job.sbatch` maps Slurm-specific variables (`SLURM_JOB_ID`, `SLURM_JOB_NUM_NODES`, `SLURM_NODEID`, etc.) to generic env vars (`JOB_ID`, `NNODES`, `NODE_RANK`, etc.) before calling any downstream script. The container boundary (`_container.sh`) and everything below it use only these generic names — zero scheduler awareness.
+**Current state.** Slurm coupling is confined to the orchestration tier: `submit.sh` (calls `sbatch`), `_job.sbatch` (Slurm directives + `srun`), and monitoring utilities (`utils/slurm_job_monitor.sh`, `utils/reservation.sh`). `_job.sbatch` maps Slurm-specific variables (`SLURM_JOB_ID`, `SLURM_JOB_NUM_NODES`, `SLURM_NODEID`, etc.) to generic env vars (`JOB_ID`, `NNODES`, `NODE_RANK`, etc.) before calling any downstream script. The container boundary (`_container.sh`) and everything below it use only these generic names — zero scheduler awareness.
 
 **To add a new scheduler** (e.g., Kubernetes):
 

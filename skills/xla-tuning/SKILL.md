@@ -85,9 +85,10 @@ cat /maxtext-slurm/configs/<MODEL_TAG>.env.sh 2>/dev/null || echo "(no per-model
 # 6. train_env.sh state — should be clean (no leftover TUNE_PROFILE block)
 grep -c TUNE_PROFILE /maxtext-slurm/train_env.sh   # expect 0; if not, read and decide
 
-# 7. TG works (telegram skill)
+# 7. TG works (telegram skill).  Use the repo-relative path; the host-cmd
+# runs commands with the maxtext-slurm checkout as cwd.
 python3 /maxtext-slurm/.host-cmd/host_cmd.py --timeout 30 \
-  "/mnt/vast/yihuang/maxtext-slurm/utils/telegram_bot.sh send '<MODEL_TAG> <PARALLELISM> XLA-tuning agent online; pre-flight pass'"
+  "utils/telegram_bot.sh send '<MODEL_TAG> <PARALLELISM> XLA-tuning agent online; pre-flight pass'"
 ```
 
 ### Step 2 — Inventory current state

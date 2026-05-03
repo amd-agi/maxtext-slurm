@@ -221,7 +221,7 @@ The step that immediately follows the 3-step profile window (step 8 for `skip_fi
 
 ## Examples
 
-Two worked examples from the `yihuang/moe` branch's `deepseek3-671b-pdbs-sweep.md` (DeepSeek-V3 671B on MI355, 8 nodes × 8 GPUs, `pdbs=6`, seq_len = 4096, so 64 GPUs × 3 profiled steps → divisor 192).  Both illustrate the patterns described above.
+Two worked examples reconstructed from real DeepSeek-V3 671B runs (MI355, 8 nodes × 8 GPUs, `pdbs=6`, seq_len = 4096, so 64 GPUs × 3 profiled steps → divisor 192).  Both illustrate the patterns described above.  Treat them as illustrative — the kernel times will look different on your hardware/parallelism, but the *ratios* and the *workflow* of identifying the bottleneck class transfer.
 
 ### Example 1: launcher mode drill-down
 

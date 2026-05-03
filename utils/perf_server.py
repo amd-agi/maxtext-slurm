@@ -813,7 +813,9 @@ def main():
     )
     parser.add_argument(
         "--host", default="127.0.0.1",
-        help="bind address (default: 127.0.0.1, use 0.0.0.0 for remote access)",
+        help="bind address (default: 127.0.0.1). For remote access, prefer "
+             "SSH tunneling (ssh -L PORT:localhost:PORT user@host) over "
+             "--host 0.0.0.0 — the dashboard has no auth.",
     )
     parser.add_argument(
         "--port", type=int, default=None,

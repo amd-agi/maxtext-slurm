@@ -49,7 +49,7 @@ Running `MaxText.train.main()` directly inside a [Ray](https://www.ray.io/) acto
 
 **Initialization:** Ray cluster bootstrap, [Prometheus](https://prometheus.io/), and [TensorBoard](https://www.tensorflow.org/tensorboard) add extra startup time — negligible for production runs but noticeable for short benchmarks. Use `RAY=0` (the default) for quick benchmarks; `RAY=1` for long-running jobs or when debugging and monitoring are needed.
 
-**Debuggability:** training runs in a subprocess, so `py-spy` must use `--subprocesses` to inspect it — this is pre-configured in `ray_cluster.sh`. The Ray Dashboard's live stack traces and CPU flame graphs work normally.
+**Debuggability:** training runs in a subprocess, so `py-spy` invocations from the Ray Dashboard need to target the training PID, not the actor PID. `utils/ray_cluster.sh` installs a `py-spy` wrapper that resolves the actor's child training process and forwards `dump`/`record` calls to it (with `--subprocesses` for fan-out modes), so live stack traces and CPU flame graphs work normally with no operator intervention.
 
 ## Artifact system
 
@@ -98,9 +98,9 @@ The utility is launcher-agnostic (pure bash) — see the header comment in `util
 
 ## Preflight and environment
 
-Before training starts, `_job.sbatch` runs per-host preflight checks (`preflight.sh`) that clean up leftover GPU processes, prune stale containers, and tune system settings (THP, NUMA). `docker_utils.sh` auto-detects a usable container runtime — prefers [Podman](https://podman.io/) (rootless), falls back to [Docker](https://www.docker.com/).
+Before training starts, `_job.sbatch` runs per-host preflight checks (`utils/preflight.sh`) that clean up leftover GPU processes, prune stale containers, and tune system settings (THP, NUMA). `utils/docker_utils.sh` auto-detects a usable container runtime — prefers [Podman](https://podman.io/) (rootless), falls back to [Docker](https://www.docker.com/).
 
-`train_env.sh` centralizes runtime environment variables (XLA, NCCL, ROCm, Transformer Engine). `_train.sh` sources it before launching training; `_env_KEY=VALUE` passthrough args override it per-run. See [Job Submission: Environment Configuration](job-submission.md#environment-configuration) for details. NCCL network settings (IB HCA, QoS traffic class, socket interface) are auto-detected at runtime by `detect_nccl_env.sh` — sourced by `train_env.sh` in script mode and by `_container.sh` in interactive mode. This runs inside the container (or directly on the host for non-container paths like `in_container_run.sh`), so the same detection logic works regardless of the execution environment.
+`train_env.sh` centralizes runtime environment variables (XLA, NCCL, ROCm, Transformer Engine). `_train.sh` sources it before launching training; `_env_KEY=VALUE` passthrough args override it per-run. See [Job Submission: Environment Configuration](job-submission.md#environment-configuration) for details. NCCL network settings (IB HCA, QoS traffic class, socket interface) are auto-detected at runtime by `utils/detect_nccl_env.sh` — sourced by `train_env.sh` in script mode and by `_container.sh` in interactive mode. This runs inside the container (or directly on the host for non-container paths like `in_container_run.sh`), so the same detection logic works regardless of the execution environment.
 
 ## Container boundary
 
@@ -112,9 +112,9 @@ The codebase is layered so that scheduler coupling is confined to the orchestrat
 
 | Tier | Files | Scheduler coupling |
 |------|-------|--------------------|
-| **Orchestration** | `submit.sh`, `_job.sbatch`, `reservation.sh`, `slurm_job_monitor.sh` | Slurm-specific (`sbatch`, `srun`, `#SBATCH`). `_job.sbatch` maps Slurm variables to generic env vars (`JOB_ID`, `NNODES`, `NODE_RANK`, etc.) before calling downstream scripts. Replace this tier for a different scheduler. |
+| **Orchestration** | `submit.sh`, `_job.sbatch`, `utils/reservation.sh`, `utils/slurm_job_monitor.sh` (Slurm); `k8s_submit.sh`, `_k8s_job.sh` (Kubernetes) | Each entry-point bundle is scheduler-specific. `_job.sbatch` / `_k8s_job.sh` map scheduler variables (`SLURM_*` or `JOB_COMPLETION_INDEX`) to generic env vars (`JOB_ID`, `NNODES`, `NODE_RANK`, etc.) before calling downstream scripts. Add a parallel implementation for a new scheduler. |
 | **Container boundary** | `_container.sh` | Scheduler-agnostic. Uses only generic env vars (set by the orchestration layer); maps `RAY` → `USE_RAY` and conditionally passes training/Ray env vars to Docker. |
 | **Training** | `_train.sh`, `train_env.sh`, all Python code | Zero scheduler awareness. |
-| **Utilities** | `parse_job_args.sh`, `run_setup.sh`, `artifact.sh`, `preflight.sh`, `docker_utils.sh`, `stage_timeout.sh` | No scheduler dependency. |
+| **Utilities** | `utils/parse_job_args.sh`, `utils/run_setup.sh`, `utils/artifact.sh`, `utils/preflight.sh`, `utils/docker_utils.sh`, `utils/stage_timeout.sh` | No scheduler dependency. |
 
 To add a new scheduler (e.g., Kubernetes), only the orchestration tier needs a parallel implementation — write a new entry point that sets the same generic env vars and calls `_container.sh`. See [Extensibility](extensibility.md) for details on each adaptation axis.

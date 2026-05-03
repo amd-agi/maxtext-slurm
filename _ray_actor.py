@@ -10,9 +10,13 @@ The Ray actor handles:
   - Streaming logs (subprocess inherits actor's stdout/stderr fds)
   - Collecting the exit code
 
-Stack traces & flame graphs are available via the Ray Dashboard (port 8265).
-py-spy is wrapped to target the training subprocess directly (see
-ray_cluster.sh).
+Stack traces & flame graphs are available via the Ray Dashboard at
+127.0.0.1:8265 on the head node — reach it via the SSH tunnel command
+printed by `print_ray_info()` in `utils/ray_cluster.sh` (it does NOT
+listen on the head's external interfaces; that's intentional, since
+the dashboard's job-submission API is unauthenticated).  py-spy is
+wrapped to target the training subprocess directly (see
+`utils/ray_cluster.sh`).
 """
 
 import os
