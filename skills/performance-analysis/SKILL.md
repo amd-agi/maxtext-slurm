@@ -122,10 +122,10 @@ If the dashboard is not running, start it:
 
 ```bash
 pip install fastapi uvicorn   # one-time
-utils/perf_server.py --host 0.0.0.0 &
+utils/perf_server.py &        # binds 127.0.0.1 by default
 ```
 
-**Always tell the user the dashboard URL:** `http://<host>:<PORT>`
+**Always tell the user the dashboard URL:** `http://localhost:<PORT>`. For remote access, instruct them to tunnel: `ssh -L <PORT>:localhost:<PORT> user@host`. Avoid `--host 0.0.0.0` — `perf_server.py` has no auth.
 
 The server auto-detects a free port starting from 8080 and auto-reloads `analysis.json` on each request.
 

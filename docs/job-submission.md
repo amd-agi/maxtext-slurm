@@ -19,7 +19,7 @@ submit.sh 70b -N 1
 submit.sh 405b -N 8
 ```
 
-A warning is printed if the path doesn't appear to be on a shared filesystem. The utilities (`tail_job_log.sh`, `tag_tgs.sh`) also respect `JOB_WORKSPACE` when no explicit path argument is given.
+A warning is printed if the path doesn't appear to be on a shared filesystem. The utilities (`utils/tail_job_log.sh`, `utils/tag_tgs.sh`) also respect `JOB_WORKSPACE` when no explicit path argument is given.
 
 ## Slurm jobs (`submit.sh`)
 

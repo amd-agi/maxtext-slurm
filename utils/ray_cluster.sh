@@ -21,8 +21,10 @@ export RAY_num_heartbeats_timeout=${RAY_num_heartbeats_timeout:-20}             
 # _container.sh --env).  No default — prevents silent fallback to a
 # potentially occupied port.
 RAY_HEAD_IP="${JAX_COORDINATOR_IP:-localhost}"
-RAY_METRICS_PORT=55080
-PROMETHEUS_PORT=9190
+# Allow the caller to pre-set these via env (e.g., when running multiple jobs
+# on one host or to avoid a port collision); fall back to defaults otherwise.
+RAY_METRICS_PORT="${RAY_METRICS_PORT:-55080}"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9190}"
 
 # Persist Ray logs to the shared job output directory so they survive crashes.
 # Inside Docker, this is usually /outputs; in direct-in-container runs it may
@@ -136,9 +138,18 @@ install_ray() {
 
 start_ray_head() {
     echo "[Ray] Starting HEAD on $(hostname):${RAY_PORT}"
+    # SECURITY: bind the dashboard / job-submission HTTP endpoint to localhost
+    # only.  Binding to 0.0.0.0 + the cluster's public IPs let internet scanners
+    # hit Ray's unauthenticated `JobSubmissionClient` HTTP endpoint and run
+    # arbitrary code as root inside our container — observed once on
+    # 2026-05-03 (raysubmit_KKwrnLxXMRDKPkAY → ~127-core CPU-burn child of
+    # the container's PID 1, derailing job 14802 around step 457). Workers
+    # connect via GCS port (RAY_PORT), not dashboard, so localhost binding
+    # doesn't affect inter-node Ray.  See print_ray_info() for the updated
+    # SSH-tunnel command (now requires ProxyJump to the head node).
     if ! ray start --head --port=$RAY_PORT \
         --num-cpus=1 \
-        --dashboard-host=0.0.0.0 --dashboard-port=8265 \
+        --dashboard-host=127.0.0.1 --dashboard-port=8265 \
         --metrics-export-port=$RAY_METRICS_PORT \
         --disable-usage-stats 2>&1; then
         echo "[Ray] HEAD failed to start (port $RAY_PORT, dashboard 8265)" >&2
@@ -268,7 +279,11 @@ start_tensorboard() {
     # OUTPUT_PATH is exported by _train_with_ray.sh via resolve_output_path().
     local output_dir="${OUTPUT_PATH:?OUTPUT_PATH not set}"
     mkdir -p "$output_dir"
-    tensorboard --logdir="$output_dir" --port=6006 --bind_all &>/dev/null &
+    # SECURITY: bind to localhost (not --bind_all). Tunnel via SSH-J
+    # ProxyJump per print_ray_info().  TB serves logs only — strictly
+    # less dangerous than Ray's job-submission HTTP, but still leaks model /
+    # run names to anyone scanning the cluster's public IPs.
+    tensorboard --logdir="$output_dir" --port=6006 --host=127.0.0.1 &>/dev/null &
     echo "[TensorBoard] Started on port 6006 (logdir: $output_dir)"
 }
 
@@ -282,9 +297,10 @@ print_ray_info() {
     local login_ip="${LOGIN_NODE_IP:-user-unknown@ip-unknown}"
     cat <<EOF
 ==============================================
-SSH tunnel from your local machine (use hostname or IP, whichever works):
-  ssh -L 8265:${host}:8265 -L 6006:${host}:6006 -L ${PROMETHEUS_PORT}:${host}:${PROMETHEUS_PORT} ${login_hostname}
-  ssh -L 8265:${host}:8265 -L 6006:${host}:6006 -L ${PROMETHEUS_PORT}:${host}:${PROMETHEUS_PORT} ${login_ip}
+SSH tunnel from your local machine (Ray dashboard is bound to the head's
+localhost for security; use ProxyJump through the login node):
+  ssh -J ${login_hostname} -L 8265:localhost:8265 -L 6006:localhost:6006 -L ${PROMETHEUS_PORT}:localhost:${PROMETHEUS_PORT} root@${host}
+  ssh -J ${login_ip}       -L 8265:localhost:8265 -L 6006:localhost:6006 -L ${PROMETHEUS_PORT}:localhost:${PROMETHEUS_PORT} root@${host}
 
 Then open in your browser:
   Ray Dashboard:  http://localhost:8265

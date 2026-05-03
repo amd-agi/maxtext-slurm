@@ -1184,12 +1184,14 @@ def _dashboard_hint() -> None:
     if port is not None:
         print(
             f"\n{CYAN}Dashboard:{RESET} "
-            f"http://0.0.0.0:{port}  (running)"
+            f"http://127.0.0.1:{port}  (running; "
+            f"tunnel with `ssh -L {port}:localhost:{port}` for remote access)"
         )
     else:
         print(
             f"\n{CYAN}Start dashboard:{RESET}  "
-            f"utils/perf_server.py --host 0.0.0.0"
+            f"utils/perf_server.py  "
+            f"(localhost only — tunnel via SSH for remote access)"
         )
 
 
