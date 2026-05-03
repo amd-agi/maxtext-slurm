@@ -237,7 +237,7 @@ Compare per-node GPU compute performance and find outliers. Use when the user gi
 1. **Submit 1N baseline jobs in parallel** to each node using `llama2-70b` (dense, fast to compile, stable TGS):
 
    ```bash
-   for node in chi2832 chi2863 chi2867 chi2868; do
+   for node in node001 node002 node003 node004; do
      python3 /maxtext-slurm/.host-cmd/host_cmd.py \
        "cd <repo_path> && ./submit.sh 70b:${node}: -N 1 -w ${node}" \
        --timeout 30
@@ -259,10 +259,10 @@ Compare per-node GPU compute performance and find outliers. Use when the user gi
    ```markdown
    | Node | Job | TGS/device | vs. median | Status |
    |------|-----|------------|------------|--------|
-   | chi2832 | 9701 | 1,842 | +0.1% | healthy |
-   | chi2863 | 9702 | 1,838 | -0.1% | healthy |
-   | chi2867 | 9703 | 1,840 | 0.0% | healthy |
-   | chi2868 | 9704 | 1,695 | -7.9% | DEGRADED |
+   | node001 | 9701 | 1,842 | +0.1% | healthy |
+   | node002 | 9702 | 1,838 | -0.1% | healthy |
+   | node003 | 9703 | 1,840 | 0.0% | healthy |
+   | node004 | 9704 | 1,695 | -7.9% | DEGRADED |
    ```
 
 5. **Evaluate:**
@@ -320,12 +320,12 @@ Since this only tests network health (not steady-state TGS), use `-- steps=1` to
 5. **Narrow with 2N jobs** to pinpoint the exact node:
 
    ```bash
-   # If group A was bad (chi[2832,2863,2867-2868]):
+   # If group A was bad (node[001-004]):
    python3 /maxtext-slurm/.host-cmd/host_cmd.py \
-     "cd <repo_path> && ./submit.sh 70b:pair-a1: -N 2 -w chi[2832,2863] -- steps=1" \
+     "cd <repo_path> && ./submit.sh 70b:pair-a1: -N 2 -w node[001-002] -- steps=1" \
      --timeout 30
    python3 /maxtext-slurm/.host-cmd/host_cmd.py \
-     "cd <repo_path> && ./submit.sh 70b:pair-a2: -N 2 -w chi[2867-2868] -- steps=1" \
+     "cd <repo_path> && ./submit.sh 70b:pair-a2: -N 2 -w node[003-004] -- steps=1" \
      --timeout 30
    ```
 
@@ -334,14 +334,14 @@ Since this only tests network health (not steady-state TGS), use `-- steps=1` to
    ```markdown
    | Group | Nodes | TGS/device | vs. expected | Status |
    |-------|-------|------------|-------------|--------|
-   | all-8 | chi[2832,...,2881] | 1,320 | -5.2% | DEGRADED |
-   | group-a | chi[2832,2863,2867-2868] | 1,385 | -0.4% | healthy |
-   | group-b | chi[2870,2872,2880-2881] | 1,310 | -5.8% | DEGRADED |
-   | pair-b1 | chi[2870,2872] | 1,388 | +0.0% | healthy |
-   | pair-b2 | chi[2880-2881] | 1,295 | -6.9% | DEGRADED |
+   | all-8 | node[001-008] | 1,320 | -5.2% | DEGRADED |
+   | group-a | node[001-004] | 1,385 | -0.4% | healthy |
+   | group-b | node[005-008] | 1,310 | -5.8% | DEGRADED |
+   | pair-b1 | node[005-006] | 1,388 | +0.0% | healthy |
+   | pair-b2 | node[007-008] | 1,295 | -6.9% | DEGRADED |
    ```
 
-   In this example, the issue is between chi2880 and chi2881 (or one of them has a bad NIC). Cross-reference with the 1N per-node sweep — if both were healthy individually, the problem is the network link between them.
+   In this example, the issue is between node007 and node008 (or one of them has a bad NIC). Cross-reference with the 1N per-node sweep — if both were healthy individually, the problem is the network link between them.
 
 7. **Report** findings and recommend excluding the problematic node(s) or escalating to the infrastructure team for IB link repair.
 

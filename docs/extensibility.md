@@ -32,6 +32,7 @@ Each layer communicates with its neighbors through environment variables and cal
 
 1. Write a new orchestration entry point that sets the same generic env vars (`JOB_ID`, `NNODES`, `NODE_RANK`, `JAX_COORDINATOR_IP`, `NODELIST_EXPANDED`). For observability, also set `RAY=1`. See the env var contract documented at the top of `_container.sh`.
 2. Call `in_container_run.sh` (when the pod IS the container) or `_container.sh` (when Docker launch is needed). Everything downstream runs unmodified.
+3. **Set `JAX_COORDINATOR_IP` to the rank-0 node's cluster-private IP** via `source utils/detect_ip.sh; export JAX_COORDINATOR_IP="$(detect_cluster_ip)"`. The default (e.g., `SLURM_LAUNCH_NODE_IPADDR` on Slurm or `hostname -I | awk '{print $1}'` on dual-IP hosts) often returns the public IP, which exposes the unauthenticated JAX coordinator and Ray GCS to the internet — internet scanners join open Ray clusters as raylets and run code inside them within seconds. `_job.sbatch` and `_k8s_job.sh` already do this; copy the same idiom in any new entry point. Single-node and no-private-network setups fall back to the public IP automatically.
 
 This has been implemented for Kubernetes: `k8s_submit.sh` generates an Indexed Job manifest that calls `_k8s_job.sh` (coordinator discovery + barrier), which delegates to `in_container_run.sh`. See [Kubernetes job submission](k8s-job-submission.md).
 

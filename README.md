@@ -40,7 +40,7 @@ RAY=1 submit.sh 70b -N 8
 
 ### Live dashboards
 
-All three dashboards bind to `127.0.0.1` on the job's head node (loopback only — the Ray dashboard's job-submission API is unauthenticated, so wide binding is unsafe). Reach them through the SSH ProxyJump tunnel command printed in the job log; see [Observability: SSH tunnel](docs/observability.md#ssh-tunnel).
+All three dashboards bind to `127.0.0.1` on the job's head node (loopback only — the Ray dashboard's job-submission API is unauthenticated, so wide binding is unsafe). Inter-node services (Ray GCS, JAX coordinator) bind to the cluster's RFC1918 subnet, not the public IP. Reach the dashboards through the SSH ProxyJump tunnel command printed in the job log; see [Observability: SSH tunnel](docs/observability.md#ssh-tunnel).
 
 | Dashboard | What it shows | Port (head's localhost) |
 |-----------|--------------|------|

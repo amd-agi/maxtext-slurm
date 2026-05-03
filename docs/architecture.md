@@ -49,6 +49,8 @@ Running `MaxText.train.main()` directly inside a [Ray](https://www.ray.io/) acto
 
 **Initialization:** Ray cluster bootstrap, [Prometheus](https://prometheus.io/), and [TensorBoard](https://www.tensorflow.org/tensorboard) add extra startup time — negligible for production runs but noticeable for short benchmarks. Use `RAY=0` (the default) for quick benchmarks; `RAY=1` for long-running jobs or when debugging and monitoring are needed.
 
+**Network binding:** the user-facing HTTP services (Ray dashboard, Prometheus, TensorBoard) bind to `127.0.0.1` on the head node; inter-node services (Ray GCS on `RAY_PORT`, JAX coordinator on `JAX_COORDINATOR_PORT`) bind to the cluster's RFC1918 private subnet via `detect_cluster_ip()` in `utils/detect_ip.sh`. Both are intentional security boundaries — see [Observability: Real-time monitoring](observability.md#real-time-monitoring) for the rationale and the SSH-tunnel command for legitimate dashboard access.
+
 **Debuggability:** training runs in a subprocess, so `py-spy` invocations from the Ray Dashboard need to target the training PID, not the actor PID. `utils/ray_cluster.sh` installs a `py-spy` wrapper that resolves the actor's child training process and forwards `dump`/`record` calls to it (with `--subprocesses` for fan-out modes), so live stack traces and CPU flame graphs work normally with no operator intervention.
 
 ## Artifact system
