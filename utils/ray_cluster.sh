@@ -3,6 +3,10 @@
 
 _RAY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$_RAY_SCRIPT_DIR/utils/job_dir.sh"
+# detect_cluster_ip is required by start_ray_head / start_ray_worker for the
+# `--node-ip-address` private-bind security fix.  Source at the top so the
+# function is in scope regardless of which entry point reaches us.
+source "$_RAY_SCRIPT_DIR/utils/detect_ip.sh"
 
 export RAY_LOG_TO_STDERR=0
 export RAY_BACKEND_LOG_LEVEL=fatal
@@ -137,22 +141,29 @@ install_ray() {
 }
 
 start_ray_head() {
-    echo "[Ray] Starting HEAD on $(hostname):${RAY_PORT}"
-    # SECURITY: bind the dashboard / job-submission HTTP endpoint to localhost
-    # only.  Binding to 0.0.0.0 + the cluster's public IPs let internet scanners
-    # hit Ray's unauthenticated `JobSubmissionClient` HTTP endpoint and run
-    # arbitrary code as root inside our container — observed once on
-    # 2026-05-03 (raysubmit_KKwrnLxXMRDKPkAY → ~127-core CPU-burn child of
-    # the container's PID 1, derailing job 14802 around step 457). Workers
-    # connect via GCS port (RAY_PORT), not dashboard, so localhost binding
-    # doesn't affect inter-node Ray.  See print_ray_info() for the updated
-    # SSH-tunnel command (now requires ProxyJump to the head node).
+    # SECURITY (dashboard): bind the dashboard / job-submission HTTP
+    # endpoint to localhost only.  Ray's `JobSubmissionClient` HTTP API is
+    # unauthenticated; binding to 0.0.0.0 on a host with a public IP lets
+    # an internet scanner submit code that runs as root inside the
+    # container.
+    #
+    # SECURITY (GCS): bind the GCS server (RAY_PORT) to the cluster-
+    # private subnet only.  GCS defaults to binding all interfaces
+    # (0.0.0.0); on a public IP, internet scanners can join the cluster as
+    # raylets within seconds of head startup and execute code in the
+    # actor pool.  `--node-ip-address=<private>` restricts the GCS bind to
+    # the private IP only — workers reach the head over the private
+    # subnet, internet scanners cannot connect.
+    local cluster_ip
+    cluster_ip=$(detect_cluster_ip)
+    echo "[Ray] Starting HEAD on $(hostname):${RAY_PORT} (bind=${cluster_ip})"
     if ! ray start --head --port=$RAY_PORT \
         --num-cpus=1 \
+        --node-ip-address="$cluster_ip" \
         --dashboard-host=127.0.0.1 --dashboard-port=8265 \
         --metrics-export-port=$RAY_METRICS_PORT \
         --disable-usage-stats 2>&1; then
-        echo "[Ray] HEAD failed to start (port $RAY_PORT, dashboard 8265)" >&2
+        echo "[Ray] HEAD failed to start (port $RAY_PORT, dashboard 8265, bind $cluster_ip)" >&2
         return 1
     fi
     _persist_ray_logs
@@ -163,11 +174,17 @@ start_ray_head() {
 }
 
 start_ray_worker() {
-    echo "[Ray] Starting WORKER -> ${RAY_HEAD_IP}:${RAY_PORT}"
+    # SECURITY: bind the worker raylet to the cluster-private IP (matches
+    # the head's GCS bind in start_ray_head).  Workers must connect to the
+    # head over the private subnet, never the public network.
+    local cluster_ip
+    cluster_ip=$(detect_cluster_ip)
+    echo "[Ray] Starting WORKER -> ${RAY_HEAD_IP}:${RAY_PORT} (bind=${cluster_ip})"
     sleep 5
     for i in {1..18}; do
         ray start --address="${RAY_HEAD_IP}:${RAY_PORT}" \
             --num-cpus=1 \
+            --node-ip-address="$cluster_ip" \
             --no-monitor \
             --metrics-export-port=$RAY_METRICS_PORT \
             --disable-usage-stats &>/dev/null && {

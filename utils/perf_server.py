@@ -349,7 +349,7 @@ def _parse_kernel_category_csv(path: Path) -> list[dict] | None:
 def _nodelist_first(nodelist: str) -> str:
     """Return the first hostname from a NODELIST string.
 
-    Handles Slurm bracket notation (``chi[2815-2817,2820]`` → ``chi2815``),
+    Handles Slurm bracket notation (``node[001-003,005]`` → ``node001``),
     comma-separated (``node01,node02`` → ``node01``), and plain strings.
     """
     bracket = nodelist.find("[")

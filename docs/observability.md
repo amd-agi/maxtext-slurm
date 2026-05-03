@@ -24,6 +24,8 @@ See [Notifications](notifications.md) for one-time setup, full usage, options, a
 
 Three dashboards are accessible via SSH tunnel while the job runs. All three bind to **`127.0.0.1` on the job's head node** — they are not reachable on the head's external interfaces. This is intentional: the Ray dashboard's [job-submission HTTP endpoint](https://docs.ray.io/en/latest/cluster/running-applications/job-submission/index.html) is unauthenticated and would let anyone with TCP reach to that port run arbitrary code as root inside the container. The localhost binding closes that surface; legitimate access goes through SSH ProxyJump.
 
+> **Inter-node services** (Ray GCS on `RAY_PORT`, JAX coordinator on `JAX_COORDINATOR_PORT`) bind to the cluster-private RFC1918 subnet via `detect_cluster_ip()` in `utils/detect_ip.sh`, not `0.0.0.0`. Workers reach the head over the private subnet only — internet scanners that previously joined open Ray clusters as raylets can no longer connect. The metrics-exporter port (`9400`) remains cross-node-reachable on the private subnet so Prometheus can scrape it. Single-node and no-private-network setups fall back to the public IP automatically.
+
 | Dashboard | What it shows | Port (head's localhost) |
 |-----------|--------------|------|
 | [Ray](https://www.ray.io/) Dashboard | Actor status, live stack traces, flame graphs | 8265 |
