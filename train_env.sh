@@ -84,6 +84,15 @@ fi
 XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_gpu_enable_command_buffer=''"
 export XLA_FLAGS
 
+# ---- Append extra XLA flags from _env_EXTRA_XLA_FLAGS=flag1,flag2,... ----
+# Use commas to separate flags; they are converted to spaces here. Applied AFTER
+# all base XLA_FLAGS construction so they reliably override or supplement.
+if [[ -v 'EXTRACTED_ENV_MAP[EXTRA_XLA_FLAGS]' ]]; then
+    XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }${EXTRACTED_ENV_MAP[EXTRA_XLA_FLAGS]//,/ }"
+    export XLA_FLAGS
+    echo "[train_env] XLA_FLAGS APPENDED via _env_EXTRA_XLA_FLAGS"
+fi
+
 # ============================================================================
 # Common NCCL / runtime settings
 # ============================================================================

@@ -24,3 +24,15 @@ if ! MODEL_NAME=$(resolve_model_name "$SCRIPT_DIR/configs" "$MODEL_NAME"); then
 fi
 
 JOB_NAME="JAX-${MODEL_NAME}${EXP_TAG:+-$EXP_TAG}"
+
+# Cap JOB_NAME so that submit.sh's `<jobid>-<JOB_NAME>.log` output filename
+# stays within the filesystem NAME_MAX (255 bytes on ext4/xfs). Slurm jobids
+# are up to 8 digits + ".log" + "-" → reserve ~14 bytes; cap to 200 keeps a
+# safe margin. When truncating, append a short md5 hash so unique configs
+# still produce unique log files / job dirs.
+_JOB_NAME_MAX=200
+if (( ${#JOB_NAME} > _JOB_NAME_MAX )); then
+    _hash=$(printf '%s' "$JOB_NAME" | md5sum | head -c 8)
+    JOB_NAME="${JOB_NAME:0:$((_JOB_NAME_MAX - 9))}-${_hash}"
+fi
+unset _JOB_NAME_MAX _hash

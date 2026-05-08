@@ -10,14 +10,24 @@
 # ---- Base XLA_FLAGS (matching AMD image: rocm/jax-training:maxtext-v26.2) ----
 # The NVIDIA JAX image only ships enable_latency_hiding_scheduler=true.
 # We explicitly set the remaining flags that the AMD image provides by default.
-XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }"
-XLA_FLAGS+="--xla_gpu_memory_limit_slop_factor=95 "
-XLA_FLAGS+="--xla_gpu_reduce_scatter_combine_threshold_bytes=8589934592 "
-XLA_FLAGS+="--xla_gpu_all_gather_combine_threshold_bytes=8589934592 "
-XLA_FLAGS+="--xla_gpu_enable_triton_gemm=false "
-XLA_FLAGS+="--xla_gpu_enable_cublaslt=true "
-XLA_FLAGS+="--xla_gpu_autotune_level=0 "
-XLA_FLAGS+="--xla_gpu_enable_all_gather_combine_by_dim=false"
+#
+# Override via _env_XLA_FLAGS_REPLACE='--flag1=v1,--flag2=v2' to replace this
+# entire AMD-parity block (e.g. for "NV image defaults" experiments). The final
+# fix-up flag (--xla_gpu_enable_command_buffer='') in train_env.sh runs AFTER
+# this replacement, so include it in the replacement value if you want it kept.
+if [[ -v 'EXTRACTED_ENV_MAP[XLA_FLAGS_REPLACE]' ]]; then
+    XLA_FLAGS="${EXTRACTED_ENV_MAP[XLA_FLAGS_REPLACE]//,/ }"
+    echo "[train_env.nvidia] XLA_FLAGS REPLACED via _env_XLA_FLAGS_REPLACE"
+else
+    XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }"
+    XLA_FLAGS+="--xla_gpu_memory_limit_slop_factor=95 "
+    XLA_FLAGS+="--xla_gpu_reduce_scatter_combine_threshold_bytes=8589934592 "
+    XLA_FLAGS+="--xla_gpu_all_gather_combine_threshold_bytes=8589934592 "
+    XLA_FLAGS+="--xla_gpu_enable_triton_gemm=false "
+    XLA_FLAGS+="--xla_gpu_enable_cublaslt=true "
+    XLA_FLAGS+="--xla_gpu_autotune_level=0 "
+    XLA_FLAGS+="--xla_gpu_enable_all_gather_combine_by_dim=false"
+fi
 export XLA_FLAGS
 
 # ---- Transformer Engine (CUDA backend) ----
