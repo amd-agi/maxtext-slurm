@@ -35,7 +35,7 @@ Both skills read the same xplane artifacts (`*.trace.json.gz`, `*.xplane.pb`).  
 
 `profile_drill.py` has **no runtime dependency on TraceLens** — it reads `.trace.json.gz` files directly via Python's stdlib (`gzip` + `json`) and never loads TraceLens modules.  The skill and `performance-analysis` are independent analysis paths over the same upstream profiler output.
 
-The indirect dependency is that **the `.trace.json.gz` file has to exist**.  In the standard MaxText setup, the JAX profiler writes `.trace.json.gz` natively alongside `.xplane.pb` (see `utils/mfu_tracker.py` which flocks `jax.profiler.stop_trace`).  This relies on the `xprof` (aka `tensorboard-plugin-profile`) package being importable at trace-write time.
+The indirect dependency is that **the `.trace.json.gz` file has to exist**.  In the standard MaxText setup, the JAX profiler writes `.trace.json.gz` natively alongside `.xplane.pb` (see `utils/monkey_patch_maxtext.py` which flocks `jax.profiler.stop_trace`).  This relies on the `xprof` (aka `tensorboard-plugin-profile`) package being importable at trace-write time.
 
 If the profile directory contains `*.xplane.pb` files **but no matching `*.trace.json.gz`** — typically a container issue with xprof / TensorFlow 2.19+ compatibility — install and patch TraceLens following the steps in `skills/performance-analysis/SKILL.md` (Step 2 and [tracelens-patches.md](../performance-analysis/tracelens-patches.md)).  That install pulls in a compatible `xprof` and patches the known renames; then re-run the training job so the next profile window writes `.trace.json.gz` natively.  You do not need to actually *use* TraceLens after that — `profile_drill.py` can operate on the native JAX output directly.
 

@@ -157,7 +157,7 @@ elif [[ "${ONE_GPU_PER_PROCESS}" == "true" ]]; then
     for (( i=0; i<LOCAL_WORLD_SIZE; i++ )); do
         LOCAL_RANK=$i \
         GLOBAL_RANK=$(( NODE_RANK * LOCAL_WORLD_SIZE + i )) \
-        python3 -u "$SCRIPT_DIR/utils/mfu_tracker.py" "${TRAIN_ARGS[@]}" &
+        python3 -u "$SCRIPT_DIR/utils/monkey_patch_maxtext.py" "${TRAIN_ARGS[@]}" &
         PIDS+=($!)
     done
     _exit_code=0
@@ -168,5 +168,5 @@ elif [[ "${ONE_GPU_PER_PROCESS}" == "true" ]]; then
 else
     # Direct Mode (with MFU tracking)
     echo "Launching MaxText.train directly..."
-    python3 -u "$SCRIPT_DIR/utils/mfu_tracker.py" "${TRAIN_ARGS[@]}"
+    python3 -u "$SCRIPT_DIR/utils/monkey_patch_maxtext.py" "${TRAIN_ARGS[@]}"
 fi

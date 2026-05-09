@@ -61,14 +61,14 @@ class MaxTextTrainerActor:
         thread contamination.  stdout/stderr are inherited from the actor
         worker, so output flows through Ray's log streaming automatically.
         """
-        # Resolve the mfu_tracker.py script path (same entry point as non-Ray mode)
+        # Resolve the monkey_patch_maxtext.py script path (same entry point as non-Ray mode)
         script_dir = env_vars.get(
             "MAXTEXT_SLURM_DIR",
             os.path.dirname(os.path.abspath(__file__)),
         )
-        mfu_script = os.path.join(script_dir, "utils", "mfu_tracker.py")
+        monkey_patch_script = os.path.join(script_dir, "utils", "monkey_patch_maxtext.py")
 
-        cmd = [sys.executable, "-u", mfu_script] + list(argv)
+        cmd = [sys.executable, "-u", monkey_patch_script] + list(argv)
 
         # Ensure PYTHONUNBUFFERED is set for real-time log streaming
         launch_env = dict(env_vars)
@@ -145,7 +145,7 @@ def main():
     captured_env = dict(os.environ)
 
     # Ensure MAXTEXT_SLURM_DIR is in the captured env so the actor can
-    # reliably resolve mfu_tracker.py.  (submit.sh exports this on the host,
+    # reliably resolve monkey_patch_maxtext.py.  (submit.sh exports this on the host,
     # but it is not passed as a Docker --env flag.)
     captured_env.setdefault(
         "MAXTEXT_SLURM_DIR",

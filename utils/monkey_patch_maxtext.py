@@ -1,15 +1,49 @@
 #!/usr/bin/env python3
-"""On-the-fly MFU (Model FLOPs Utilization) tracking for MaxText training.
+"""Apply MaxText/JAX runtime monkey-patches, then invoke MaxText.train.main().
+
+The Python leaf of the launcher chain — invoked by `_train.sh` (direct mode
+and 1-GPU-per-process fan-out) and by `_ray_actor.py` (as the Ray actor's
+training subprocess).  All five things this file does are either patches
+applied to MaxText/JAX at process boot or the invocation those patches
+wrap; the file is a *patches + invocation* unit, not a generic utility.
+
+Patches applied at boot, in order:
+
+  1. JAX distributed pre-init for 1-GPU-per-process mode (no-op otherwise).
+     Slurm sees node-level tasks, so neither JAX's SLURM auto-detect nor
+     MaxText's `initialize_jax_for_gpu` can derive the per-process topology.
+     We `jax.distributed.initialize()` here, then unset JAX_COORDINATOR_IP
+     so MaxText's init becomes a no-op (its guard is
+     `if JAX_COORDINATOR_IP is not None`).
+
+  2. `jax.profiler.stop_trace` swap for the 1-GPU/proc xplane race fix.
+     LOCAL_WORLD_SIZE processes share a hostname and would clobber each
+     other's `<host>.xplane.pb` writes.  Replacement serializes via
+     host-scoped flock and renames each rank's output to
+     `<host>.proc<LOCAL_RANK>.<ext>`.  No-op outside 1-GPU/proc mode.
+
+  3. MFU (Model FLOPs Utilization) stdout/stderr interception: wraps both
+     streams with `_MFUStream` to append `, MFU: X.XX%` after every MaxText
+     `TFLOP/s/device:` log line.  Peak TFLOPS auto-detected from the GPU
+     model + dtype; override with `HARDWARE_PEAK_TFLOPS=<float>`.
+
+  4. Fast-exit on completion: `os._exit(rc)` after `MaxText.train.main()`
+     returns, bypassing JAX's `pending_event_logger` atexit drain that has
+     been observed to spin for 5–15 minutes on large MoE models and that
+     can produce asymmetric rank-N exit-1 even when training succeeded.
+     Opt out with `MAXTEXT_FAST_EXIT=0`.
 
 Usage:
-    # Diagnostic (print GPU detection + peak TFLOPS):
-    python3 mfu_tracker.py
+    # Diagnostic (print GPU detection + peak TFLOPS, no MaxText invocation):
+    python3 utils/monkey_patch_maxtext.py
 
-    # Training mode (direct or via Ray subprocess):
-    python3 -u mfu_tracker.py <config.yml> [key=value ...]
+    # Training mode (not normally invoked by hand; reached via _train.sh
+    # or _ray_actor.py):
+    python3 -u utils/monkey_patch_maxtext.py <config.yml> [key=value ...]
 
-Override auto-detection:
-    export HARDWARE_PEAK_TFLOPS=5000
+Env-var overrides:
+    HARDWARE_PEAK_TFLOPS=<float>  # bypass GPU auto-detect for MFU
+    MAXTEXT_FAST_EXIT=0           # disable os._exit (use normal shutdown)
 """
 
 import io
