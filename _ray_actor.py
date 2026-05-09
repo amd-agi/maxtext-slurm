@@ -174,7 +174,20 @@ def main():
         traceback.print_exc()
         exit_code = 1
     finally:
-        ray.kill(actor, no_restart=True)
+        # Best-effort: the actor may already be self-terminating, the GCS
+        # connection on another rank may have torn down concurrently, the
+        # RPC may have timed out, or the runtime context may be gone.  Any
+        # of those would raise from `ray.kill`, which without the wrapper
+        # would propagate out of `finally`, suppress `sys.exit(exit_code)`,
+        # and cause Python to exit non-zero with a traceback EVEN WHEN
+        # TRAINING SUCCEEDED.  Symptom is asymmetric rank-N exits at job
+        # end (1 of N ranks exits 1, the others 0) for jobs that reached
+        # the final training step cleanly.  Race exposure scales with N,
+        # so the bug shows up most often on multi-node sweeps.
+        try:
+            ray.kill(actor, no_restart=True)
+        except Exception:
+            pass
 
     sys.exit(exit_code)
 

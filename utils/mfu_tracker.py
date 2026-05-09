@@ -499,7 +499,50 @@ def main():
     _maybe_tag_profiler_output_with_local_rank()  # no-op in 1-node/proc mode
     setup(argv)
     from MaxText import train as maxtext_train
-    maxtext_train.main(["maxtext_train"] + argv)
+
+    rc = 0
+    try:
+        maxtext_train.main(["maxtext_train"] + argv)
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 1
+    except BaseException:
+        import traceback
+        traceback.print_exc()
+        rc = 1
+
+    # Fast-exit: skip Python's normal shutdown (atexit + module finalization)
+    # because JAX/PjRt's `pending_event_logger` drain has been observed to
+    # spin for 5–15 minutes after `maxtext_train.main` returns on large
+    # MoE models, adding non-trivial wall time and (when one rank's drain
+    # hits an internal exception) producing an asymmetric rank-N exit-1
+    # at job end.  By the time control returns from MaxText, the artifacts
+    # we actually want are already on disk:
+    #   - TensorBoard events flushed (MaxText flushes per-step + on
+    #     training completion)
+    #   - profile xplane traces serialized by `jax.profiler.stop_trace`
+    #     inside the training loop
+    #   - MFU / TGS lines already printed
+    #   - Orbax checkpoints flushed via `checkpoint_manager.wait_until_
+    #     finished()` (called by MaxText's training loop on its way out;
+    #     `os.sync()` below is belt-and-braces in case the underlying NFS
+    #     is `async`-mounted)
+    # Pending GPU events that JAX is waiting to drain are prefetch / async-
+    # copy work for the *next* step that never runs — abandoning them does
+    # not affect the loss curve, the TB events, or any committed
+    # checkpoints.  On `os._exit`, the kernel reclaims GPU memory, NCCL
+    # state, and inherited file descriptors; nothing leaks beyond the
+    # process boundary.
+    #
+    # Opt-out: set `MAXTEXT_FAST_EXIT=0` (or any value other than `1`/`true`)
+    # to fall back to a normal Python shutdown.  Use this if you suspect
+    # an atexit-only side-effect in the training stack you're running
+    # (e.g., a custom callback that writes outputs from `__del__`).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if os.environ.get("MAXTEXT_FAST_EXIT", "1").lower() not in ("1", "true", "yes"):
+        sys.exit(rc)
+    os.sync()  # flush all kernel page-cache writes (cheap, ~ms)
+    os._exit(rc)
 
 
 if __name__ == "__main__":
