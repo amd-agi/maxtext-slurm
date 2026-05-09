@@ -94,7 +94,7 @@ Find the optimal `per_device_batch_size` (or other parameters) for maximum stead
 
 Ask the user for:
 1. **Model name** (must have a `.gpu.yml` in `configs/`)
-2. **Node count and nodelist** (e.g. `-N 8 -w chi[2832,2863,2867-2868]`)
+2. **Node count and nodelist** (e.g. `-N 8 -w <node-list>`)
 3. **Parameter to sweep** (default: `per_device_batch_size`)
 4. **Any env overrides** (e.g. `_env_XLA_PYTHON_CLIENT_MEM_FRACTION=.93`)
 
@@ -290,7 +290,7 @@ Since this only tests network health (not steady-state TGS), use `-- steps=1` to
 
    ```bash
    python3 /maxtext-slurm/.host-cmd/host_cmd.py \
-     "cd <repo_path> && ./submit.sh 70b:all-nodes: -N 8 -w chi[2832,2863,2867-2868,2870,2872,2880-2881] -- steps=1" \
+     "cd <repo_path> && ./submit.sh 70b:all-nodes: -N 8 -w <all-nodes> -- steps=1" \
      --timeout 30
    ```
 
@@ -301,11 +301,11 @@ Since this only tests network health (not steady-state TGS), use `-- steps=1` to
    ```bash
    # Group A: first half
    python3 /maxtext-slurm/.host-cmd/host_cmd.py \
-     "cd <repo_path> && ./submit.sh 70b:group-a: -N 4 -w chi[2832,2863,2867-2868] -- steps=1" \
+     "cd <repo_path> && ./submit.sh 70b:group-a: -N 4 -w <group-a-nodes> -- steps=1" \
      --timeout 30
    # Group B: second half
    python3 /maxtext-slurm/.host-cmd/host_cmd.py \
-     "cd <repo_path> && ./submit.sh 70b:group-b: -N 4 -w chi[2870,2872,2880-2881] -- steps=1" \
+     "cd <repo_path> && ./submit.sh 70b:group-b: -N 4 -w <group-b-nodes> -- steps=1" \
      --timeout 30
    ```
 

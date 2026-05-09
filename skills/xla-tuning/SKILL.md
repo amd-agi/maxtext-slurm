@@ -23,7 +23,7 @@ The user must provide:
 1. **`MODEL_TAG`** — must match `configs/<MODEL_TAG>.gpu.yml`. Examples: `deepseek3-671b`, `qwen3-32b`, `llama3.1-405b`, `mixtral-8x22b`.
 
 2. **`CLUSTER_SLOT`** — one of:
-   - explicit `nodelist=chi[…]` *(recommended; pinned hardware drops TGS noise to ~0.3-1 % which is what you need to detect 1-3 % flag deltas)*
+   - explicit `nodelist=<list>` *(recommended; pinned hardware drops TGS noise to ~0.3-1 % which is what you need to detect 1-3 % flag deltas)*
    - `partition=<name>+nodes=<N>` *(let slurm pick from the partition pool)*
    - `nodes=<N>` only *(agent runs `sinfo` and picks N idle nodes from the default partition)*
 
@@ -386,7 +386,7 @@ When triaging a hung or crashed job, **`grep -v` these patterns out first** befo
 | **`HSA_STATUS_ERROR` / `rocdevice.cpp: Aborting`** | GPU runtime error mid-training | Cancel; `ssh <node> 'rocm-smi --showtemp \| head'` to check thermal state; `dmesg -T \| grep -iE "amdgpu\|hsa\|gpu hang"` to look for hardware fault signatures. If it's a thermal issue or transient firmware glitch, wait 1-2 min, retry. | hardware fault signature in dmesg (XID-equivalent ECC, GPU reset, fabric link down) → **TG-stop** with the dmesg excerpt |
 | **`NodeFail` event mid-job** | node drops out during training | Same as "Single node drain/down" above — try `RESUME`. | if multiple nodes fail in the same wave, the cluster has a wider problem → **TG-stop** |
 | **Slurm `cgroup OOM` killing the entire docker container** with no JAX-side error | host-side memory pressure (rare on training jobs but possible if too many grain workers fork) | Read `journalctl -k --since '<time>' \| grep -iE 'oom\|killed'` on the host. Often resolved by freeing per-rank prefetch buffers (e.g. set `grain_worker_count=0` if grain accidentally got enabled — though tuning runs should be synthetic). | persistent host OOM with synthetic data → **TG-stop**; this means the model+pdbs combination is genuinely exceeding host RAM, not a flag-tuning issue |
-| **Image tarball missing or unreadable** | `ls /mnt/vast/.../….tar` fails | Re-check the path via host-cmd; check fs mount via `df -h /mnt/vast`. | path still missing → **TG-stop** (no submission can succeed) |
+| **Image tarball missing or unreadable** | `ls <path-from-DOCKER_IMAGE>.tar` fails (read the path from `container_env.sh`) | Re-check the path via host-cmd; check the fs mount via `df -h <mount-point>`. | path still missing → **TG-stop** (no submission can succeed) |
 | **Slurm controller down** (`squeue` / `sbatch` returns errors via host-cmd) | `slurm_load_jobs error: Connection refused` or similar | Wait 5 min, retry. Slurm controllers occasionally restart. | controller down >15 min → **TG-stop** |
 | **GitHub 500 during MaxText patch-branch checkout** | `remote: Internal Server Error` / `RPC failed; HTTP 5xx` / `fatal: unable to access 'https://github.com/...'` early in a job | Wait 5 min, resubmit. Hourly retry afterwards. (No max retries — this is a global outage, not a cluster issue.) | n/a — GitHub recovers on its own; just keep retrying. If a 4-hour outage blocks the sweep, TG-update so the user knows |
 

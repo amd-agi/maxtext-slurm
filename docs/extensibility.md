@@ -20,7 +20,7 @@ The guiding principle:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-\* Most utilities are framework-agnostic (`stage_timeout.sh` is fully launcher-agnostic; the metrics plugin system is entirely framework-independent). A few straddle the training boundary: `mfu_tracker.py` imports MaxText directly, `tgs_tagger.py` parses MaxText log format, and `resolve_model_name.sh` resolves `.gpu.yml` configs. Swapping the training framework requires updating these (see [Axis 3](#axis-3-training-framework-maxtext-custom-jax-code)).
+\* Most utilities are framework-agnostic (`stage_timeout.sh` is fully launcher-agnostic; the metrics plugin system is entirely framework-independent). A few straddle the training boundary: `mfu_tracker.py` imports MaxText directly, `tgs_tagger.py` parses MaxText log format, and `resolve_model_name.sh` resolves `.gpu.yml` configs. Swapping the training framework requires updating these (see [Axis 3](#axis-3-training-framework-maxtext--custom-jax-code)).
 
 Each layer communicates with its neighbors through environment variables and calling conventions — never by reaching across layers. Adapting one layer requires no changes — or at most minor guards — in the others.
 
