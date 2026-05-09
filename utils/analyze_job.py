@@ -547,9 +547,9 @@ def _parse_tracelens_summary(job_dir: Path) -> dict | None:
 
     Layouts:
       * 1-node/proc: ``tracelens/<ts>/csvs/gpu_events_averages.csv``.
-      * 1-GPU/proc (via ``mfu_tracker.py``'s xplane-tagging shim):
+      * 1-GPU/proc (via ``monkey_patch_maxtext.py``'s xplane-tagging shim):
         ``tracelens/<ts>/<host>.proc<N>/csvs/gpu_events_averages.csv`` —
-        one csvs dir per local rank.  Because ``mfu_tracker.py``
+        one csvs dir per local rank.  Because ``monkey_patch_maxtext.py``
         serializes ``stop_trace``, successive same-host writes typically
         land in distinct per-second ``<ts>`` dirs, so each ``<ts>`` usually
         contains exactly one ``<host>.proc<N>`` stem; any that contain
@@ -818,7 +818,7 @@ def _tracelens_output_dir(job_dir: Path, xplane_file: Path) -> Path:
     results per profiling window: ``tracelens/<ts>/csvs/*.csv``.
 
     In 1-GPU-per-process mode the xplane filename carries a ``.proc<N>``
-    segment (``<host>.proc<N>.xplane.pb`` — see ``mfu_tracker.py``'s
+    segment (``<host>.proc<N>.xplane.pb`` — see ``monkey_patch_maxtext.py``'s
     ``_maybe_tag_profiler_output_with_local_rank``), so multiple per-GPU
     reports from the same host would collide at the flat path.  We nest
     those under the xplane's stem: ``tracelens/<ts>/<host>.proc<N>/csvs/*.csv``.

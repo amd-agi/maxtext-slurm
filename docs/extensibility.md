@@ -20,7 +20,7 @@ The guiding principle:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-\* Most utilities are framework-agnostic (`stage_timeout.sh` is fully launcher-agnostic; the metrics plugin system is entirely framework-independent). A few straddle the training boundary: `mfu_tracker.py` imports MaxText directly, `tgs_tagger.py` parses MaxText log format, and `resolve_model_name.sh` resolves `.gpu.yml` configs. Swapping the training framework requires updating these (see [Axis 3](#axis-3-training-framework-maxtext--custom-jax-code)).
+\* Most utilities are framework-agnostic (`stage_timeout.sh` is fully launcher-agnostic; the metrics plugin system is entirely framework-independent). A few straddle the training boundary: `monkey_patch_maxtext.py` imports MaxText directly, `tgs_tagger.py` parses MaxText log format, and `resolve_model_name.sh` resolves `.gpu.yml` configs. Swapping the training framework requires updating these (see [Axis 3](#axis-3-training-framework-maxtext--custom-jax-code)).
 
 Each layer communicates with its neighbors through environment variables and calling conventions — never by reaching across layers. Adapting one layer requires no changes — or at most minor guards — in the others.
 
@@ -55,12 +55,12 @@ This has been implemented for Kubernetes: `k8s_submit.sh` generates an Indexed J
 
 ## Axis 3: training framework (MaxText → custom JAX code)
 
-**Current state.** MaxText is the training framework used in this reference implementation. It is baked into the Docker image (configured in `container_env.sh`). The `import MaxText` boundary exists in exactly two Python files (`mfu_tracker.py` and `_ray_actor.py`), both invoked by `_train.sh`. Shell scripts pass training arguments opaquely (`key=value` pairs after `--`), so the orchestration layer has no framework awareness.
+**Current state.** MaxText is the training framework used in this reference implementation. It is baked into the Docker image (configured in `container_env.sh`). The `import MaxText` boundary exists in exactly two Python files (`monkey_patch_maxtext.py` and `_ray_actor.py`), both invoked by `_train.sh`. Shell scripts pass training arguments opaquely (`key=value` pairs after `--`), so the orchestration layer has no framework awareness.
 
 **To plug in a different JAX training framework:**
 
 1. Provide the new framework. Two options: build a new Docker image with it pre-installed (set `DOCKER_IMAGE` via the command line or edit `container_env.sh` — see [Job Submission: `container_env.sh`](job-submission.md#container_envsh-docker-image-and-paths)), or bind-mount the code and `pip install` at startup — viable for pure-Python frameworks whose deps (JAX, Flax, etc.) are already in the base image.
-2. Replace the `MaxText.train.main()` call in `mfu_tracker.py` and `_ray_actor.py` with the new framework's entry point — or make it configurable (e.g., `$TRAIN_MODULE`).
+2. Replace the `MaxText.train.main()` call in `monkey_patch_maxtext.py` and `_ray_actor.py` with the new framework's entry point — or make it configurable (e.g., `$TRAIN_MODULE`).
 3. Supply new model config files (replacing `configs/*.gpu.yml`).
 4. Update log-parsing regexes in `tgs_tagger.py` if the new framework's output format differs.
 

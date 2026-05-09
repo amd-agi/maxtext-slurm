@@ -1,6 +1,6 @@
 ---
 name: pre-commit-audit
-description: Comprehensive pre-commit verification checklist with five independent responsibilities. (1) Launcher path coverage - verify a change to any launcher-chain file preserves correct behavior across all 16 combinations of entry point × launch mode × stack (Steps 1-4 + 5.1). (2) Ancillary scripts smoke - syntax / help / read-only / caller checks for any `.sh` or `.py` outside the launcher chain (Step 5.2; covers analysis utilities, sourced libraries, debug helpers, sweep tooling). (3) Code quality and design review (Step 6) - propose-first surface of code smells (duplication, long functions, magic numbers, deep nesting, unclear naming, primitive obsession, etc.) and design-decay signals (5th case in a switch, N-th env-var read, hand-rolled retry loops); auto-fix mechanical findings, hold design-shaped ones for explicit go-ahead. (4) Docs / comments / format-consistency (Step 7) - check any commit for stale prose, trailing-comment alignment drift, broken anchors / missing files in links, drifted cross-references, and this skill itself drifting from the code it describes. (5) Sensitive-info leak scan (Step 8) - cluster hostnames, internal IPs, vendor mount paths, hard-coded credentials, internal job IDs; final security gate. Trigger keywords - "verify all launcher paths", "trace launcher chain", "audit entry × launch × stack", "path coverage", "(entry × launch × stack) matrix", "post-launch teardown verification", "pre-commit audit", "before commit", "ready to commit", "verify scripts / utils not broken", "smoke-test the changed scripts", "any utility script broken", "code quality", "design review", "code smells", "tighten and polish", "avoid quality decay", "revisit design choice", "scrub leaks", "check for sensitive info before commit", "any docs or skills need update", "any stale comments", "any inaccurate comments", "comment alignment", "link policy", "broken anchors". Use when modifying `_train.sh`, `_train_with_ray.sh`, `_ray_actor.py`, `_container.sh`, `_job.sbatch`, `_k8s_job.sh`, `in_container_run.sh`, `run_local.sh`, `submit.sh`, `k8s_submit.sh`, `utils/run_setup.sh`, `utils/ray_cluster.sh`, `utils/mfu_tracker.py`, `utils/coredump.sh`, `utils/stage_timeout.sh`, or anywhere else in the launcher chain. Also use proactively before opening any PR (Steps 5.2, 6, 7, 8 apply universally to all changes that touch code / docs / comments), when investigating a path-specific bug ("this only happens in K8s + 1-gpu-per-process"), after adding a new entry point / launch mode / stack option, after touching any analysis utility (`utils/analyze_job.py`, `utils/perf_server.py`, `utils/profile_drill.py`, `utils/slurm_job_monitor.sh`, etc.), or after editing any doc or skill in the repo (Step 7 catches cross-reference drift).
+description: Comprehensive pre-commit verification checklist with five independent responsibilities. (1) Launcher path coverage - verify a change to any launcher-chain file preserves correct behavior across all 16 combinations of entry point × launch mode × stack (Steps 1-4 + 5.1). (2) Ancillary scripts smoke - syntax / help / read-only / caller checks for any `.sh` or `.py` outside the launcher chain (Step 5.2; covers analysis utilities, sourced libraries, debug helpers, sweep tooling). (3) Code quality and design review (Step 6) - propose-first surface of code smells (duplication, long functions, magic numbers, deep nesting, unclear naming, primitive obsession, etc.) and design-decay signals (5th case in a switch, N-th env-var read, hand-rolled retry loops); auto-fix mechanical findings, hold design-shaped ones for explicit go-ahead. (4) Docs / comments / format-consistency (Step 7) - check any commit for stale prose, trailing-comment alignment drift, broken anchors / missing files in links, drifted cross-references, and this skill itself drifting from the code it describes. (5) Sensitive-info leak scan (Step 8) - cluster hostnames, internal IPs, vendor mount paths, hard-coded credentials, internal job IDs; final security gate. Trigger keywords - "verify all launcher paths", "trace launcher chain", "audit entry × launch × stack", "path coverage", "(entry × launch × stack) matrix", "post-launch teardown verification", "pre-commit audit", "before commit", "ready to commit", "verify scripts / utils not broken", "smoke-test the changed scripts", "any utility script broken", "code quality", "design review", "code smells", "tighten and polish", "avoid quality decay", "revisit design choice", "scrub leaks", "check for sensitive info before commit", "any docs or skills need update", "any stale comments", "any inaccurate comments", "comment alignment", "link policy", "broken anchors". Use when modifying `_train.sh`, `_train_with_ray.sh`, `_ray_actor.py`, `_container.sh`, `_job.sbatch`, `_k8s_job.sh`, `in_container_run.sh`, `run_local.sh`, `submit.sh`, `k8s_submit.sh`, `utils/run_setup.sh`, `utils/ray_cluster.sh`, `utils/monkey_patch_maxtext.py`, `utils/coredump.sh`, `utils/stage_timeout.sh`, or anywhere else in the launcher chain. Also use proactively before opening any PR (Steps 5.2, 6, 7, 8 apply universally to all changes that touch code / docs / comments), when investigating a path-specific bug ("this only happens in K8s + 1-gpu-per-process"), after adding a new entry point / launch mode / stack option, after touching any analysis utility (`utils/analyze_job.py`, `utils/perf_server.py`, `utils/profile_drill.py`, `utils/slurm_job_monitor.sh`, etc.), or after editing any doc or skill in the repo (Step 7 catches cross-reference drift).
 ---
 
 # Pre-commit audit
@@ -15,7 +15,7 @@ Comprehensive pre-commit verification of a code change in this repo. The skill b
 
 Step 9 emits the launcher matrix (when path coverage ran) plus the per-step audit lists.
 
-The methodology behind the launcher-path-coverage half (Steps 1–4 + 5.1) is the one used to verify the `fix/training-teardown` series of fixes (`os._exit` in `mfu_tracker.py`, `bash` instead of `exec` in `_train_with_ray.sh`, guarded `ray.kill` in `_ray_actor.py`) — three changes that each affected a different subset of the 16 combinations and that all needed to land before any single combination was provably clean. The ancillary-smoke, leak-scan, and doc-audit halves are general-purpose and apply to any commit that touches scripts / docs / comments.
+The methodology behind the launcher-path-coverage half (Steps 1–4 + 5.1) is the one used to verify the `fix/training-teardown` series of fixes (`os._exit` in `monkey_patch_maxtext.py`, `bash` instead of `exec` in `_train_with_ray.sh`, guarded `ray.kill` in `_ray_actor.py`) — three changes that each affected a different subset of the 16 combinations and that all needed to land before any single combination was provably clean. The ancillary-smoke, leak-scan, and doc-audit halves are general-purpose and apply to any commit that touches scripts / docs / comments.
 
 ## Audit posture: holistic, not per-file
 
@@ -94,12 +94,12 @@ So in practice an audit only has to verify 2 + 4 = 6 distinct dynamic behaviors,
 
 | # | Launch | Stack | What runs in `_train.sh` |
 |---|---|---|---|
-| (1) | 1-node-per-process | `RAY=0` | `python3 -u utils/mfu_tracker.py "${TRAIN_ARGS[@]}"` — single Python process, sees all local GPUs |
-| (2) | 1-gpu-per-process | `RAY=0` | `for i in 0..LOCAL_WORLD_SIZE-1: python3 -u utils/mfu_tracker.py … &` then `wait` loop captures first non-zero rc |
-| (3) | 1-node-per-process | `RAY=1` | `python3 -u _ray_actor.py …` → driver creates one `MaxTextTrainerActor` per node → `actor.run_training` does `subprocess.Popen(mfu_tracker.py)` + `p.wait()` |
+| (1) | 1-node-per-process | `RAY=0` | `python3 -u utils/monkey_patch_maxtext.py "${TRAIN_ARGS[@]}"` — single Python process, sees all local GPUs |
+| (2) | 1-gpu-per-process | `RAY=0` | `for i in 0..LOCAL_WORLD_SIZE-1: python3 -u utils/monkey_patch_maxtext.py … &` then `wait` loop captures first non-zero rc |
+| (3) | 1-node-per-process | `RAY=1` | `python3 -u _ray_actor.py …` → driver creates one `MaxTextTrainerActor` per node → `actor.run_training` does `subprocess.Popen(monkey_patch_maxtext.py)` + `p.wait()` |
 | (4) | 1-gpu-per-process | `RAY=1` | same as (3), but the actor calls `_fan_out_one_gpu_per_proc` which Popens `LOCAL_WORLD_SIZE` subprocesses and waits on all |
 
-`utils/mfu_tracker.py` is the leaf in all 4 flows — every fix below the launcher level lives there.
+`utils/monkey_patch_maxtext.py` is the leaf in all 4 flows — every fix below the launcher level lives there.
 
 ## Audit procedure
 
@@ -147,7 +147,7 @@ For each touched file, look up which of the 6 distinct behaviors it participates
 | `_train_with_ray.sh` | yes (RAY=1) | yes (RAY=1) | (3), (4) |
 | `_train.sh` | yes | yes | (1), (2), (3), (4) |
 | `_ray_actor.py` | yes (RAY=1) | yes (RAY=1) | (3), (4) |
-| `utils/mfu_tracker.py` | yes | yes | (1), (2), (3), (4) |
+| `utils/monkey_patch_maxtext.py` | yes | yes | (1), (2), (3), (4) |
 | `utils/ray_cluster.sh` | yes (RAY=1) | yes (RAY=1) | (3), (4) (head- and worker-side) |
 | `utils/prometheus.sh` | yes (RAY=1, head only) | yes (RAY=1, head only) | (3), (4) |
 | `utils/metrics_exporter.sh` | yes (RAY=1) | yes (RAY=1) | (3), (4) |
@@ -155,7 +155,7 @@ For each touched file, look up which of the 6 distinct behaviors it participates
 | `utils/detect_ip.sh` | yes (read by `_job.sbatch`, `_container.sh`, `utils/ray_cluster.sh`) | yes (read by `_k8s_job.sh`, `utils/ray_cluster.sh`) | (3), (4) (binds Ray GCS to private IP) |
 | `utils/stage_timeout.sh` | yes (orchestration tier, in `_job.sbatch` only) | — | — |
 
-A change in `utils/mfu_tracker.py` (the bottom of the chain) lights up **all 16** cells. A change in `_ray_actor.py` lights up **8** (the RAY=1 half). A change in `k8s_submit.sh` lights up **4** (the K8s column). And so on.
+A change in `utils/monkey_patch_maxtext.py` (the bottom of the chain) lights up **all 16** cells. A change in `_ray_actor.py` lights up **8** (the RAY=1 half). A change in `k8s_submit.sh` lights up **4** (the K8s column). And so on.
 
 Files not listed (e.g., `utils/job_dir.sh`, `utils/split_script_args.sh`, `utils/resolve_model_name.sh`, `utils/code_provenance.sh`, `utils/release_gpu.sh`, `utils/preflight.sh`, `utils/docker_utils.sh`, `utils/pick_port.sh`) are sourced by one or more of the entries above; treat a change there as transitively affecting all flows that reach the file. Use `rg --files-with-matches "utils/<file>"` to find direct callers when in doubt.
 
@@ -398,7 +398,7 @@ for f in $files; do
 done
 ```
 
-Caveats for utilities (`utils/*`): most are framework-agnostic by design (`stage_timeout.sh`, `pick_port.sh`, `detect_ip.sh`). A few deliberately straddle the training boundary (`mfu_tracker.py`, `tgs_tagger.py`, `resolve_model_name.sh`) — see the footnote in `docs/extensibility.md` ("Axis 3"). Adding a new straddler is allowed but should be documented in the same commit; growing the existing straddlers' scope is a yellow flag worth surfacing.
+Caveats for utilities (`utils/*`): most are framework-agnostic by design (`stage_timeout.sh`, `pick_port.sh`, `detect_ip.sh`). A few deliberately straddle the training boundary (`monkey_patch_maxtext.py`, `tgs_tagger.py`, `resolve_model_name.sh`) — see the footnote in `docs/extensibility.md` ("Axis 3"). Adding a new straddler is allowed but should be documented in the same commit; growing the existing straddlers' scope is a yellow flag worth surfacing.
 
 When the diff *does* cross a boundary, the audit's verdict is one of:
 
@@ -570,7 +570,7 @@ for f in $files; do
   done
 done | sort -u
 
-# 2) File-path cross-references — `_train.sh`, `utils/mfu_tracker.py`, etc.
+# 2) File-path cross-references — `_train.sh`, `utils/monkey_patch_maxtext.py`, etc.
 for f in $files; do
   rg -l --type md -- "\b$(basename "$f")\b" docs/ skills/ README.md 2>/dev/null
 done | sort -u
@@ -725,7 +725,7 @@ Always emit:
 
 - The skill bundles five responsibilities (launcher path coverage, ancillary scripts smoke, code quality + design + architectural fit, docs / comments / format, sensitive-info leak scan). Don't split it without thinking — they share the same output format and the same "ready / not ready" recommendation, and splitting forces every commit-time invocation to dispatch across multiple skills. The path-coverage piece is launcher-specific; the other four are universal; the umbrella is "is this change ready to commit?". That said: at 700+ lines the file is approaching the threshold where readability / agent-context cost might justify a split into a "launcher-path-coverage" specialist + a "general-pre-commit-audit" umbrella for the rest. Revisit if a 6th responsibility lands.
 - The matrix size grows on every new entry point or launch mode added; update both the matrix and Step 2's file → flow table when that happens.
-- `mfu_tracker.py` is the universal leaf — any change there invalidates all 16 cells, so always smoke at least one cell from each (RAY × launch) corner: 4 smokes minimum.
+- `monkey_patch_maxtext.py` is the universal leaf — any change there invalidates all 16 cells, so always smoke at least one cell from each (RAY × launch) corner: 4 smokes minimum.
 - `_container.sh` is the entry-pair-1 leaf and only invalidates 8 cells; `_k8s_job.sh` is entry-pair-2 and only invalidates 8.
 - The skill assumes the **current 4×2×2 = 16 layout**; if a 5th entry point, 3rd launch mode, or 3rd stack lands, the matrix expands accordingly.
 - For deep call-chain reasoning (e.g., "does this change affect compile-cache invalidation across 1-node-per-process vs 1-gpu-per-process?"), this skill does not replace per-file code reading. Use it to ensure **path coverage**; use code reading to ensure **per-path correctness**.

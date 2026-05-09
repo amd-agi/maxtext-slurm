@@ -203,7 +203,7 @@ _install_pyspy_subprocess_wrapper() {
     #
     # The Ray Dashboard calls 'py-spy dump -p <worker_pid>', but the worker is
     # just sitting in p.wait() — the real training runs in a child process
-    # (mfu_tracker.py).  Attaching py-spy to the worker's thread-heavy process
+    # (monkey_patch_maxtext.py).  Attaching py-spy to the worker's thread-heavy process
     # and traversing via --subprocesses is slow and unreliable (frequent 500s).
     #
     # This wrapper finds the worker's child PID and targets it directly, which
@@ -221,7 +221,7 @@ _install_pyspy_subprocess_wrapper() {
 REAL="$(dirname "$0")/$(basename "$0")-real"
 if [[ "$1" == "dump" || "$1" == "record" ]]; then
     # Redirect to child process: the Ray Dashboard targets the Ray worker PID,
-    # but the training code runs in a subprocess (mfu_tracker.py).  Targeting
+    # but the training code runs in a subprocess (monkey_patch_maxtext.py).  Targeting
     # the child directly is faster and far more reliable than traversing the
     # worker's thread-heavy process tree.
     #
