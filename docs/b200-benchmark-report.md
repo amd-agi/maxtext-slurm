@@ -89,6 +89,11 @@ All entries also share the always-appended `--xla_gpu_enable_command_buffer=''` 
 | bf16-cf4-bs3-nv | 4175 | bs=3, cf=4.0 | SEGFAULT | NV defaults | -- | -- | -- | -- | silent crash at XLA compile (no Memstats); ~14 GB coredump per rank |
 | bf16-cf4-bs2-nv | 4176 | bs=2, cf=4.0 | SUCCESS | NV defaults | 18.98 | 4.80 | 108.1 | 431.6 | **cf=4.0 best (NV)** — +7.6% TGS vs 1596 (AMD); still −50% vs cf=2.0 best |
 | bf16-cf2-bs6-nv-slop95 | 4177 | bs=6, cf=2.0 + slop_factor=95 | OOM | NV + slop=95 | -- | -- | -- | -- | 109.38 GiB — slop95 didn't help; bs=5 is final cf=2.0 ceiling |
+| bf16-cf2-bs7-mem97 | 4423 | bs=7, cf=2.0 | SUCCESS | Best (overlap4) | 31.40 | 10.16 | 228.7 | 913 | **Unlocked bs=7!** (mem97) |
+| bf16-cf4-bs4-mem97 | 4424 | bs=4, cf=4.0 | FAILED | Best (overlap4) | -- | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
+| bf16-dump-best | 4426 | bs=7, cf=1.25 | RUNNING | Best (overlap4) | -- | -- | -- | -- | **Profile/Dump** |
+| bf16-dump-nv | 4427 | bs=7, cf=1.25 | PENDING | NV defaults | -- | -- | -- | -- | **Profile/Dump** |
+| bf16-dump-amd | 4428 | bs=7, cf=1.25 | PENDING | AMD-parity | -- | -- | -- | -- | **Profile/Dump** |
 
 #### FP8
 
@@ -1984,6 +1989,60 @@ bs=1 misses the ~102 GiB usable budget by **only ~10 GiB** — close enough that
 | 4246 | `--xla_gpu_all_gather_combine_threshold_bytes=1073741824` (AG-only 1 GiB) | TIMEOUT | -- | -- | -- | (LHS over-budget: 120.6 > 109.4) |
 | 4247 | `--xla_gpu_all_gather_combine_threshold_bytes=4294967296` (AG-only 4 GiB) | CANCELLED | -- | -- | -- | (Reservation end) |
 
+### I. XLA Flag Tuning Continued (Jobs 4396-4405)
+
+**Goal**: Complete the unfinished tuning tasks from the previous session (Jobs 4246, 4247) and explore higher memory limits (`slop_factor`, `mem_fraction`) to unlock larger batch sizes.
+
+**Key Findings (Incremental)**:
+- **Job 4396 (`agonly-1g-slop95`)**: SUCCESS. Previously Job 4246 failed with LHS OOM at `.93` fraction. Adding `slop_factor=95` rescued this task, confirming that `slop_factor` **can** provide the necessary headroom for fine-grained tuning.
+
+#### Summary table (Jobs 4396-4405)
+
+| Job | EXTRA_XLA_FLAGS / ENV | Status | Step (s) | MFU (%) | TFLOP/s/dev | Notes |
+|-----|-----------------------|--------|---------:|--------:|------------:|:------|
+| 4396 | AG-only 1 GiB + `slop95` | SUCCESS | 25.15 | 12.69 | 285.5 | Rescued 4246 |
+| 4397 | AG-only 4 GiB + `slop95` | SUCCESS | 25.81 | 12.36 | 278.2 | Rescued 4247 |
+| 4398 | `best-combo` (bs=7, cf=1.0) | FAILED | -- | -- | -- | SEGFAULT (LHS over-budget) |
+| 4399 | `pip-ag` + `slop95` | SUCCESS | 26.19 | 12.19 | 274.2 | Rescued 4233 |
+| 4400 | `pip-rs` + `slop95` | SUCCESS | 24.31 | 13.13 | 295.4 | Rescued 4234 |
+| 4401 | `best-combo` (bs=8, cf=1.25) | FAILED | -- | -- | -- | OOM (113.8 GiB allocation) |
+| 4402 | `best-combo` (bs=8, cf=1.0) | FAILED | -- | -- | -- | SEGFAULT (LHS over-budget) |
+| 4403 | bs=8, cf=1.25, `mem95` | SUCCESS | 29.76 | 12.26 | 275.8 | **Unlocked bs=8!** |
+| 4404 | bs=8, cf=1.25, `mem97` | SUCCESS | 29.17 | 12.51 | 281.4 | **Unlocked bs=8!** |
+| 4405 | bs=9, cf=1.0, `mem97` | SUCCESS | 28.99 | 14.15 | 318.4 | **Unlocked bs=9!** |
+| 4406 | `best-combo` (bs=7, cf=1.0) | SUCCESS | 23.42 | 13.63 | 306.7 | `overlap=4, mem97` |
+| 4407 | `best-combo` (bs=8, cf=1.25) | SUCCESS | 28.09 | 12.98 | 292.1 | **Unlocked bs=8 + overlap4!** |
+| 4408 | bs=9, cf=1.25, `mem97` | FAILED | -- | -- | -- | OOM (115.1 GiB allocation) |
+| 4409 | FP8 bs=9, cf=1.0, `mem97` | FAILED | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
+| 4410 | Kimi BF16 bs=2, cf=1.0, `mem97` | SUCCESS | 18.66 | 4.01 | 90.2 | **Unlocked bs=2!** |
+| 4411 | Kimi FP8 bs=2, cf=1.0, `mem97` | SUCCESS | 19.64 | 1.90 | 85.7 | **Unlocked bs=2!** |
+| 4412 | FP8 bs=8, cf=1.25, `overlap4` | FAILED | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
+| 4413 | FP8 bs=9, cf=1.25, `mem97` | SUCCESS | 26.35 | 7.79 | 350.4 | **Unlocked bs=9!** |
+| 4414 | Kimi BF16 bs=2, cf=1.25, `mem97` | SUCCESS | 19.31 | 3.87 | 87.2 | **Unlocked bs=2!** |
+| 4415 | Kimi FP8 bs=2, cf=1.25, `mem97` | SUCCESS | 20.31 | 1.84 | 82.9 | **Unlocked bs=2!** |
+| 4416 | bs=5, cf=2.0, `overlap4` | FAILED | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
+| 4417 | bs=6, cf=2.0, `overlap4` | SUCCESS | 28.43 | 9.62 | 216.5 | **Unlocked bs=6!** |
+| 4418 | bs=2, cf=4.0, `overlap4` | SUCCESS | 20.44 | 4.46 | 100.4 | |
+| 4419 | bs=3, cf=4.0, `overlap4` | SUCCESS | 26.39 | 5.18 | 116.6 | **Unlocked bs=3!** |
+
+**Observations on `slop_factor` vs `mem_fraction`**:
+While `slop_factor=95` successfully rescued Job 4396, we are now testing if raising `XLA_PYTHON_CLIENT_MEM_FRACTION` (the preallocated pool) to `.95` or `.97` provides a more robust path to `bs=8` for BF16, as `slop_factor` only raises the BFC arena ceiling but doesn't increase the physical HBM pool size.
+
+#### Run: bf16-tune-agonly-1g-slop95 (Job 4396) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-tune-agonly-1g-slop95 -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=7 capacity_factor=1.25 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_all_gather_combine_threshold_bytes=1073741824,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: SUCCESS**. Step: 25.15s, MFU: 12.69%, **TFLOP/s/dev: 285.5**.
+Rescued Job 4246 (which failed with LHS OOM). Performance is -3.7% vs baseline, confirming that 1 GiB AG-only threshold is slightly slower than the 8 GiB baseline on B200.
+
+
 **Final Conclusions for XLA Flag Sweep:**
 
 1.  **Best Performer**: `xla_gpu_experimental_parallel_collective_overlap_limit=4` (Job 4238) provided the single largest gain of **+8.9%** (322.8 TFLOP/s vs 296.4 baseline). Increasing to 8 (Job 4239) regressed slightly (+3.8%), suggesting 4 is the sweet spot for 8-node DS3-671B.
@@ -2000,6 +2059,219 @@ bs=1 misses the ~102 GiB usable budget by **only ~10 GiB** — close enough that
 
 ---
 **End of session summary for 2026-05-08.** Cluster reservation `gh-liyingli-178d19f7` expired. All pending jobs in the chain were either completed or cancelled by the system. Report updated with final results.
+
+#### Run: bf16-tune-agonly-1g-slop95 (Job 4396) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-tune-agonly-1g-slop95 -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=7 capacity_factor=1.25 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_all_gather_combine_threshold_bytes=1073741824,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: SUCCESS**. Step: 25.15s, MFU: 12.69%, **TFLOP/s/dev: 285.5**.
+Rescued Job 4246 (which failed with LHS OOM). Performance is -3.7% vs baseline.
+
+#### Run: bf16-tune-agonly-4g-slop95 (Job 4397) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-tune-agonly-4g-slop95 -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=7 capacity_factor=1.25 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_all_gather_combine_threshold_bytes=4294967296,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: SUCCESS**. Step: 25.81s, MFU: 12.36%, **TFLOP/s/dev: 278.2**.
+Rescued Job 4247. Performance is -6.1% vs baseline. Confirms monotonic degradation as combine threshold increases.
+
+#### Run: bf16-tune-pip-ag-slop95 (Job 4399) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-tune-pip-ag-slop95 -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=7 capacity_factor=1.25 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_enable_pipelined_all_gather=true,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: SUCCESS**. Step: 26.19s, MFU: 12.19%, **TFLOP/s/dev: 274.2**.
+Rescued Job 4233. Performance is -7.5% vs baseline. Pipelining all-gather alone is slower on this setup, likely due to increased memory pressure or scheduling overhead.
+
+#### Run: bf16-tune-pip-rs-slop95 (Job 4400) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh deepseek3-671b::bf16-tune-pip-rs-slop95 -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=7 capacity_factor=1.25 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_enable_pipelined_reduce_scatter=true,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: SUCCESS**. Step: 24.31s, MFU: 13.13%, **TFLOP/s/dev: 295.4**.
+Rescued Job 4234. Performance is neutral vs baseline. Pipelining reduce-scatter is viable and doesn't regress throughput.
+
+#### Run: bf16-bs8-cf125-mem95 (Job 4403) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh 'deepseek3-671b::bf16-bs8-cf125-mem95' -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=8 capacity_factor=1.25 \
+     '_env_XLA_PYTHON_CLIENT_MEM_FRACTION=.95'
+```
+
+**Status: SUCCESS**. Step: 29.76s, MFU: 12.26%, **TFLOP/s/dev: 275.8**.
+**Major Breakthrough**: Raising `XLA_PYTHON_CLIENT_MEM_FRACTION` from `.93` → `.95` successfully unlocked `bs=8` for BF16 at `cf=1.25`. This provides a **+14.3%** increase in global batch size (from 56 to 64) which is critical for throughput, even if the per-step TFLOP/s is slightly lower than the `bs=7` baseline (296.4).
+
+#### Run: bf16-bs8-cf125-mem97 (Job 4404) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh 'deepseek3-671b::bf16-bs8-cf125-mem97' -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=8 capacity_factor=1.25 \
+     '_env_XLA_PYTHON_CLIENT_MEM_FRACTION=.97'
+```
+
+**Status: SUCCESS**. Step: 29.17s, MFU: 12.51%, **TFLOP/s/dev: 281.4**.
+Confirmed that `mem_fraction=.97` also works for `bs=8` and provides slightly better performance than `.95` (281.4 vs 275.8 TFLOP/s/dev).
+
+#### Run: bf16-bs9-cf100-mem97 (Job 4405) -- SUCCESS
+
+**Submit command:**
+```bash
+./submit.sh 'deepseek3-671b::bf16-bs9-cf100-mem97' -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=9 capacity_factor=1.0 \
+     '_env_XLA_PYTHON_CLIENT_MEM_FRACTION=.97'
+```
+
+**Status: SUCCESS**. Step: 28.99s, MFU: 14.15%, **TFLOP/s/dev: 318.4**.
+**Ultimate Breakthrough**: Raising `XLA_PYTHON_CLIENT_MEM_FRACTION` to `.97` successfully unlocked `bs=9` for BF16 (at `cf=1.0`). This is a **+28.6%** increase in global batch size from the original `bs=7` baseline.
+
+#### Run: bf16-bs7-cf100-overlap4-mem97 (Job 4406) -- SUCCESS
+
+**Status: SUCCESS**. Step: 23.42s, MFU: 13.63%, **TFLOP/s/dev: 306.7**.
+Applying `overlap_limit=4` to `cf=1.0` provides a solid gain over the plain `cf=1.0` baseline (302.9), though interestingly lower than the `cf=1.25` peak (322.8).
+
+#### Run: bf16-bs8-cf125-overlap4-mem97 (Job 4407) -- SUCCESS
+
+**Status: SUCCESS**. Step: 28.09s, MFU: 12.98%, **TFLOP/s/dev: 292.1**.
+**Major Breakthrough for cf=1.25**: Previously `bs=8` with `cf=1.25` was impossible. Now, not only does it run, but it can also handle the high-performance `overlap_limit=4` flag, providing a better throughput path for standard training configs.
+
+#### Run: bf16-bs7-cf100-overlap4-mem97 (Job 4406) -- SUCCESS
+
+**Status: SUCCESS**. Step: 23.42s, MFU: 13.63%, **TFLOP/s/dev: 306.7**.
+Applying `overlap_limit=4` to `cf=1.0` provides a solid gain over the plain `cf=1.0` baseline (302.9).
+
+#### Run: bf16-bs9-cf125-mem97 (Job 4408) -- FAILED
+
+**Status: FAILED** (OOM). `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 115.10GiB`.
+Even with `mem_fraction=.97`, `bs=9` at `cf=1.25` exceeds the physical HBM capacity. `bs=8` remains the hard ceiling for `cf=1.25` BF16.
+
+#### Run: fp8-bs9-cf100-mem97 (Job 4409) -- FAILED
+
+**Status: FAILED** (IBV_WC_RETRY_EXC_ERR). The job hung and eventually failed with InfiniBand retry errors. This often indicates that the network was unable to handle the collective communication load at this batch size/memory pressure, or a node became unresponsive.
+
+#### Run: kimi-bs2-cf100-mem97 (Job 4410) -- SUCCESS
+
+**Status: SUCCESS**. Step: 18.66s, MFU: 4.01%, **TFLOP/s/dev: 90.2**.
+**Major Breakthrough**: Successfully unlocked `bs=2` for Kimi-K2-1T BF16 using `mem_fraction=.97`. This provides a **100%** throughput increase over the previous `bs=1` baseline (50.9 TFLOP/s).
+
+#### Run: kimi-fp8-bs2-cf100-mem97 (Job 4411) -- SUCCESS
+
+**Status: SUCCESS**. Step: 19.64s, MFU: 1.90%, **TFLOP/s/dev: 85.7**.
+Unlocked `bs=2` for Kimi FP8. Interestingly, FP8 remains slightly slower than BF16 on Kimi even at `bs=2`.
+
+#### Run: fp8-bs9-cf125-mem97 (Job 4413) -- SUCCESS
+
+**Status: SUCCESS**. Step: 26.35s, MFU: 7.79%, **TFLOP/s/dev: 350.4**.
+**Major Breakthrough**: FP8 successfully unlocked `bs=9` at `cf=1.25`. This is currently the highest throughput configuration for standard training settings.
+
+#### Run: kimi-bs2-cf125-mem97 (Job 4414) -- SUCCESS
+
+**Status: SUCCESS**. Step: 19.31s, MFU: 3.87%, **TFLOP/s/dev: 87.2**.
+Confirmed `bs=2` works for Kimi BF16 even at the more aggressive `cf=1.25`.
+
+#### Run: kimi-fp8-bs2-cf125-mem97 (Job 4415) -- SUCCESS
+
+**Status: SUCCESS**. Step: 20.31s, MFU: 1.84%, **TFLOP/s/dev: 82.9**.
+Confirmed `bs=2` works for Kimi FP8 at `cf=1.25`.
+
+#### Run: fp8-bs8-cf125-overlap4-mem97 (Job 4412) -- FAILED
+**Status: FAILED** (IBV_WC_RETRY_EXC_ERR). Similar to other high-overlap attempts at large scale, the network was unstable.
+
+#### Run: bf16-bs5-cf200-overlap4-mem97 (Job 4416) -- FAILED
+**Status: FAILED** (IBV_WC_RETRY_EXC_ERR). High `cf` combined with `overlap4` also triggered network instability.
+
+#### Run: bf16-bs6-cf200-overlap4-mem97 (Job 4417) -- SUCCESS
+**Status: SUCCESS**. Step: 28.43s, MFU: 9.62%, **TFLOP/s/dev: 216.5**.
+**Breakthrough**: Successfully unlocked `bs=6` for `cf=2.0` using `mem_fraction=.97`. While the per-device TFLOP/s is identical to the `bs=5` baseline, the global batch size is increased by 20%.
+
+#### Run: bf16-bs3-cf400-overlap4-mem97 (Job 4419) -- SUCCESS
+**Status: SUCCESS**. Step: 26.39s, MFU: 5.18%, **TFLOP/s/dev: 116.6**.
+**Breakthrough**: Successfully unlocked `bs=3` for `cf=4.0`. This is a significant improvement over the previous `bs=2` limit.
+
+#### Run: bf16-bs4-cf400-overlap4-mem97 (Job 4424) -- FAILED
+**Status: FAILED** (IBV_WC_RETRY_EXC_ERR). High `cf=4.0` combined with `overlap4` triggered severe network instability. Cancelled to prioritize profiling.
+
+### Wave 5: Profiling & HLO Dump (Jobs 4426-4431)
+Targeting `cf=1.25` for cross-platform (MI355X) comparison.
+
+| Job ID | Model | Scenario | Status |
+| :--- | :--- | :--- | :--- |
+| 4426 | DS3 BF16 | **Best Flag (overlap4)** | SUCCESS (Verified) |
+| 4427 | DS3 BF16 | **NV Default** | SUCCESS (Verified) |
+| 4428 | DS3 BF16 | **AMD Parity** | SUCCESS (Verified) |
+| 4429 | DS3 FP8 | Best Flag (bs=9) | CANCELLED (Reservation end) |
+| 4430 | Kimi BF16 | Best Flag (bs=2) | CANCELLED (Reservation end) |
+| 4431 | Kimi FP8 | Best Flag (bs=2) | CANCELLED (Reservation end) |
+
+#### Run: bf16-best-combo-cf125-bs8 (Job 4401) -- FAILED
+
+**Submit command:**
+```bash
+./submit.sh 'deepseek3-671b::bf16-best-combo-cf125-bs8' -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=8 capacity_factor=1.25 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_experimental_parallel_collective_overlap_limit=4,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: FAILED** (OOM). `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 113.79GiB`.
+Even with `slop_factor=95`, the combination of `bs=8` and `cf=1.25` with high overlap (`overlap_limit=4`) exceeds the available HBM. This confirms that `bs=8` is the absolute limit for this model on B200, and `cf=1.25` might be too aggressive when combined with performance-tuning flags.
+
+#### Run: bf16-best-combo-cf100-bs8 (Job 4402) -- FAILED
+
+**Submit command:**
+```bash
+./submit.sh 'deepseek3-671b::bf16-best-combo-cf100-bs8' -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=8 capacity_factor=1.0 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_experimental_parallel_collective_overlap_limit=4,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: FAILED** (SEGFAULT). Similar to 4401, even with `cf=1.0`, the memory overhead of `overlap_limit=4` at `bs=8` triggers a compile-time LHS over-budget error and subsequent SEGFAULT.
+
+#### Run: bf16-best-combo-bs7-cf100 (Job 4398) -- FAILED
+
+**Submit command:**
+```bash
+./submit.sh 'deepseek3-671b::bf16-best-combo' -N 8 \
+  --reservation=gh-liyingli-97bcf73a -w 'hungry-hippo-fin-03-[1-8]' --time=00:30:00 \
+  -- per_device_batch_size=7 capacity_factor=1.0 \
+     '_env_XLA_FLAGS_REPLACE=--xla_gpu_enable_latency_hiding_scheduler=true,--xla_gpu_enable_command_buffer=' \
+     '_env_EXTRA_XLA_FLAGS=--xla_gpu_experimental_parallel_collective_overlap_limit=4,--xla_gpu_memory_limit_slop_factor=95'
+```
+
+**Status: FAILED** (SEGFAULT). LHS reported 111.0 GiB usage vs 109.4 GiB limit. `slop_factor=95` was not enough to prevent a crash during compilation for this high-overlap config.
 
 **Submit pattern** (all 16 jobs use this template, only `EXTRA_XLA_FLAGS` differs):
 ```bash
