@@ -1,0 +1,5 @@
+# 4-node full feature config: original attention, Turbo GMM, and internode DeepEP.
+base_config: "deepseek3-671b-proxy-internode-smoke-4n.gpu.yml"
+
+attention: cudnn_flash_te
+use_deepep_dispatch: True

@@ -19,14 +19,18 @@ fi
 # ── end Registry credentials ──────────────────────────────────────────────────
 
 # ── Docker image ──────────────────────────────────────────────────────────────
-DOCKER_IMAGE="${DOCKER_IMAGE:-/mnt/vast/llying/turbo-deepep-1proc1gpu.tar}"
+# Default to the local DeepEP-enabled tarball so jobs that need primus_turbo
+# (e.g. use_deepep_dispatch=True configs) don't silently fall back to the
+# stock public image and fail at pyconfig validation. Override at the CLI:
+#   DOCKER_IMAGE=rocm/jax-training:maxtext-v26.2 ./submit.sh ...
+DOCKER_IMAGE="${DOCKER_IMAGE:-/home/liyingli/workspace/jax-deepep/jax-deepep-1p1g.tar}"
 USE_DOCKER_IMAGE_AINIC_DRIVER="${USE_DOCKER_IMAGE_AINIC_DRIVER:-true}"    # Use the container's built-in AINIC driver; set to false to bind-mount host IB libs instead (needed when container libionic1 mismatches host firmware)
 MAXTEXT_REPO_DIR="${MAXTEXT_REPO_DIR:-/workspace/maxtext}"                # MaxText location inside the container
-MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH-llying/moe-turbo-gmm-and-deepep-v3-mp}"                           # Global patch branch (explicit empty = skip checkout, use image default); per-model .env.sh can override
+MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH:-llying/moe-turbo-gmm-and-deepep-v3-mp}"                           # Global patch branch (explicit empty = skip checkout, use image default); per-model .env.sh can override
 # ── end Docker image ──────────────────────────────────────────────────────────
 
 # ── Host paths to mount ───────────────────────────────────────────────────────
-DATASET_DIR="${DATASET_DIR:-/mnt/vast/datasets}"                          # Host path to datasets (mounted read-only as /datasets inside the container)
+DATASET_DIR="${DATASET_DIR:-~/datasets}"                                            # Host path to datasets (mounted read-only as /datasets inside the container)
 # Extra coredump directories to probe (beyond JOB_WORKSPACE).
 # First entry with >500GB free space wins.
 # CLI override: comma-separated string, e.g. COREDUMP_EXTRA_DIRS="/path1,/path2"
@@ -34,7 +38,7 @@ if [[ -n "${COREDUMP_EXTRA_DIRS:-}" ]]; then
     IFS=',' read -ra COREDUMP_EXTRA_DIRS <<< "$COREDUMP_EXTRA_DIRS"
 else
     COREDUMP_EXTRA_DIRS=(
-        "/perf_apps/maxtext_coredump"             # DLC cluster
+        "~/perf_apps/maxtext_coredump"             # DLC cluster
     )
 fi
 # ── end Host paths to mount ───────────────────────────────────────────────────

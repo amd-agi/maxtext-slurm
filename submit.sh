@@ -41,7 +41,7 @@ echo "PASSTHROUGH_ARGS=\"${PASSTHROUGH_ARGS[*]}\""
 echo "JOB_NAME=$JOB_NAME"
 
 # ------- Slurm settings -------------
-export SLURM_TREE_WIDTH=128
+export SLURM_TREE_WIDTH="${SLURM_TREE_WIDTH:-128}"
 
 # ------- Ray export (if enabled) -------
 RAY_EXPORT=()

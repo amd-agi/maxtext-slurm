@@ -128,6 +128,25 @@ export HSA_ENABLE_IPC_MODE_LEGACY=1
 export HSA_FORCE_FINE_GRAIN_PCIE=1
 export HSA_NO_SCRATCH_RECLAIM=1
 
+# ---- rocSHMEM GDA settings ----
+# The PyTorch Primus-Turbo internode DeepEP benchmark that passes on this
+# cluster uses rocSHMEM GDA with the mlx5 provider.  Ablation showed that
+# explicitly setting ROCSHMEM_GDA_PROVIDER=mlx5 is the key fix for:
+#   Failed to lock memory pool ((nil)): 0x1001
+# Keep the full set of successful benchmark defaults here, while preserving
+# per-run _env_* overrides.
+ROCSHMEM_MLX5_GDA_DEFAULTS="${ROCSHMEM_MLX5_GDA_DEFAULTS:-1}"
+if [[ "${ROCSHMEM_MLX5_GDA_DEFAULTS,,}" =~ ^(1|y|yes|true)$ ]]; then
+    if compgen -G "/sys/class/infiniband/mlx5_*" >/dev/null; then
+        export ROCSHMEM_BACKEND="${ROCSHMEM_BACKEND:-gda}"
+        export ROCSHMEM_GDA_PROVIDER="${ROCSHMEM_GDA_PROVIDER:-mlx5}"
+        export ROCSHMEM_BOOTSTRAP_SOCKET_IFNAME="${ROCSHMEM_BOOTSTRAP_SOCKET_IFNAME:-${NCCL_SOCKET_IFNAME:-eth0}}"
+        export ROCSHMEM_HEAP_SIZE="${ROCSHMEM_HEAP_SIZE:-2147483648}"
+        export ROCSHMEM_MAX_NUM_CONTEXTS="${ROCSHMEM_MAX_NUM_CONTEXTS:-64}"
+        echo "[INFO] rocSHMEM mlx5/GDA defaults: ROCSHMEM_BACKEND=${ROCSHMEM_BACKEND} ROCSHMEM_GDA_PROVIDER=${ROCSHMEM_GDA_PROVIDER} ROCSHMEM_BOOTSTRAP_SOCKET_IFNAME=${ROCSHMEM_BOOTSTRAP_SOCKET_IFNAME} ROCSHMEM_HEAP_SIZE=${ROCSHMEM_HEAP_SIZE} ROCSHMEM_MAX_NUM_CONTEXTS=${ROCSHMEM_MAX_NUM_CONTEXTS}"
+    fi
+fi
+
 # ---- Transformer Engine optimizations ----
 export NVTE_CK_USES_BWD_V3=1
 export NVTE_CK_USES_FWD_V3=1
@@ -158,31 +177,67 @@ export NVTE_CK_HOW_V3_BF16_CVT=2
 #export JAX_PGLE_AGGREGATION_PERCENTILE=90
 #export JAX_PGLE_PROFILING_RUNS=5
 
-export IONIC_LOCKFREE=all
-
-# DMABUF default: enabled for performance, with runtime safety fallback below.
-# If /boot kernel metadata is unavailable in the container, this file
-# automatically forces NCCL_DMABUF_ENABLE=0 to avoid known SIGSEGV cases.
-export NCCL_DMABUF_ENABLE=1
-# Safety guard for direct sourcing and non-container launch paths.
-if [[ "${NCCL_DMABUF_ENABLE:-}" == "1" ]]; then
-    _kernel_release="$(uname -r 2>/dev/null || true)"
-    _has_boot_kernel_metadata=false
-    if [[ -n "$_kernel_release" && -d /boot ]] && compgen -G "/boot/*${_kernel_release}*" >/dev/null; then
-        _has_boot_kernel_metadata=true
+if [[ -z "${IONIC_LOCKFREE:-}" ]]; then
+    _TRAIN_ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$_TRAIN_ENV_DIR/utils/detect_ainic_nccl_ib_tc.sh"
+    if is_pensando; then
+        export IONIC_LOCKFREE=all
     fi
-    if [[ "$_has_boot_kernel_metadata" != "true" ]]; then
-        echo "[WARN] NCCL_DMABUF_ENABLE=1 but /boot lacks host kernel metadata for kernel '$_kernel_release'."
-        echo "[WARN] Forcing NCCL_DMABUF_ENABLE=0 (mount /boot read-only to keep DMABUF enabled)."
+    unset _TRAIN_ENV_DIR
+fi
+
+_kernel_config_has() {
+    local option="$1"
+    local kernel_release="$2"
+    local config_file="/boot/config-${kernel_release}"
+
+    if [[ -r "$config_file" ]]; then
+        grep -q "^${option}=y" "$config_file"
+        return $?
+    fi
+
+    if [[ -r /proc/config.gz ]] && command -v zgrep >/dev/null 2>&1; then
+        zgrep -q "^${option}=y" /proc/config.gz
+        return $?
+    fi
+
+    return 1
+}
+
+_kernel_supports_nccl_dmabuf() {
+    local kernel_release
+    kernel_release="$(uname -r 2>/dev/null || true)"
+    [[ -n "$kernel_release" ]] || return 1
+    _kernel_config_has CONFIG_DMABUF_MOVE_NOTIFY "$kernel_release" &&
+        _kernel_config_has CONFIG_PCI_P2PDMA "$kernel_release"
+}
+
+# DMABUF default: auto. Enable only when the running kernel advertises the
+# required P2P DMABUF options; otherwise keep it off to avoid known SIGSEGVs.
+NCCL_DMABUF_ENABLE="${NCCL_DMABUF_ENABLE:-auto}"
+if [[ "${NCCL_DMABUF_ENABLE}" == "auto" ]]; then
+    if _kernel_supports_nccl_dmabuf; then
+        export NCCL_DMABUF_ENABLE=1
+    else
+        export NCCL_DMABUF_ENABLE=0
+        echo "[INFO] NCCL_DMABUF_ENABLE=auto resolved to 0 (kernel lacks CONFIG_DMABUF_MOVE_NOTIFY/CONFIG_PCI_P2PDMA)."
+    fi
+elif [[ "${NCCL_DMABUF_ENABLE:-}" == "1" ]]; then
+    if ! _kernel_supports_nccl_dmabuf; then
+        echo "[WARN] NCCL_DMABUF_ENABLE=1 but the kernel lacks CONFIG_DMABUF_MOVE_NOTIFY/CONFIG_PCI_P2PDMA."
+        echo "[WARN] Forcing NCCL_DMABUF_ENABLE=0."
         export NCCL_DMABUF_ENABLE=0
     fi
+else
+    export NCCL_DMABUF_ENABLE
 fi
+unset -f _kernel_config_has _kernel_supports_nccl_dmabuf
 
 export NCCL_GDRCOPY_ENABLE=1
 export NCCL_GDR_FLUSH_DISABLE=1
 export NCCL_IB_ECE_ENABLE=0
 # NOTE: NCCL_IB_TC and NCCL_IB_FIFO_TC are auto-detected above (see utils/detect_nccl_env.sh).
-export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-1}"
+[[ -n "${NCCL_IB_GID_INDEX:-}" ]] && export NCCL_IB_GID_INDEX
 export NCCL_IB_PCI_RELAXED_ORDERING=1
 export NCCL_IB_USE_INLINE=1
 export NCCL_IGNORE_CPU_AFFINITY=1
@@ -190,7 +245,10 @@ export NCCL_PXN_DISABLE=0
 export NET_OPTIONAL_RECV_COMPLETION=1
 export RCCL_GDR_FLUSH_GPU_MEM_NO_RELAXED_ORDERING=0
 export RCCL_LL128_FORCE_ENABLE=1
-export RCCL_MSCCLPP_ENABLE=1
+# RCCL 2.27.7's default MI300X MSCCL path fails on this cluster during
+# ncclCommSplit with "number of channels available (28) less than required (32)".
+export RCCL_MSCCL_ENABLE="${RCCL_MSCCL_ENABLE:-0}"
+export RCCL_MSCCLPP_ENABLE="${RCCL_MSCCLPP_ENABLE:-0}"
 
 #export HSA_DISABLE_CACHE=1
 #export IB_PCI_RELAXED_ORDERING=1

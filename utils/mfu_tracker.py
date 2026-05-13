@@ -497,6 +497,26 @@ def main():
 
     _maybe_preinit_jax_distributed(argv)  # no-op in 1-node/proc mode
     _maybe_tag_profiler_output_with_local_rank()  # no-op in 1-node/proc mode
+
+    # ---- DeepEP minimal-repro fast path ----
+    # Run the Primus-Turbo ``moe_dispatch`` + ``moe_combine`` round-trip
+    # without loading MaxText.  Used to chase down the internode-DeepEP
+    # ``hipError_t(9) + Memory access fault on (nil)`` bug with a 30-60s
+    # iteration cycle instead of the 13-min full MaxText compile.
+    # Triggered by env var ``REPRO_INTERNODE_DEEPEP=1`` (so it works without
+    # adding the flag to ``submit.sh`` passthrough args, where ``argv[0]``
+    # is reserved for the YAML config path).
+    if os.environ.get("REPRO_INTERNODE_DEEPEP", "") not in ("", "0", "false", "False"):
+        # mfu_tracker runs as a script from utils/, which puts utils/ on sys.path
+        # but not the parent dir, so prefer a sibling-style import.
+        import repro_internode_deepep  # type: ignore
+        # Drop the YAML config and base_output_directory positional args
+        # (added by _train.sh's TRAIN_ARGS construction) — only keep the
+        # k=v passthrough args, which the repro parses for sizing knobs.
+        repro_argv = [a for a in argv if "=" in a and not a.startswith("base_output_directory=")]
+        repro_internode_deepep.main(repro_argv)
+        return
+
     setup(argv)
     from MaxText import train as maxtext_train
     maxtext_train.main(["maxtext_train"] + argv)

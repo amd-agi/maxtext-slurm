@@ -302,17 +302,20 @@ if [[ "$USE_DOCKER_IMAGE_AINIC_DRIVER" == "true" ]] || [[ "$MODE" == "interactiv
 #        -e NCCL_NET_PLUGIN=librccl-anp.so
     )
 else
-    # Detect and configure host IB-related mounts (bnxt_re or ionic driver present on host)
-    if [[ -e "/etc/libibverbs.d/bnxt_re.driver" ]] || [[ -e "/etc/libibverbs.d/ionic.driver" ]]; then
-        echo "Detected IB driver on host (bnxt_re/ionic): enabling /etc/libibverbs.d mounts."
+    # Detect and configure host IB-related mounts when the image userspace is
+    # known not to match the host driver/firmware.
+    if compgen -G "/etc/libibverbs.d/*.driver" >/dev/null; then
+        _host_ib_drivers=$(find /etc/libibverbs.d -maxdepth 1 -name '*.driver' -printf '%f ' 2>/dev/null || true)
+        echo "Detected host IB drivers (${_host_ib_drivers:-unknown}): enabling libibverbs mounts."
         IB_MOUNT_OPTIONS=(
             -v /etc/libibverbs.d:/etc/libibverbs.d:ro
             -v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
         )
     else
-        echo "No /etc/libibverbs.d/bnxt_re.driver or ionic.driver found: disabling IB mounts."
+        echo "No /etc/libibverbs.d/*.driver files found: disabling host IB userspace mounts."
         IB_MOUNT_OPTIONS=()
     fi
+    unset _host_ib_drivers
 fi
 
 # InfiniBand device passthrough (safe if IB is absent)
@@ -390,6 +393,32 @@ if [[ "${USE_RAY:-false}" == "true" ]]; then
     RAY_ENV_ARGS=(--env "RAY=1")
     [[ -n "${RAY_PORT:-}" ]] && RAY_ENV_ARGS+=(--env "RAY_PORT=$RAY_PORT")
 fi
+
+BOOT_MOUNT_OPTIONS=()
+case "${MOUNT_BOOT,,}" in
+    auto|"")
+        _kernel_release="$(uname -r 2>/dev/null || true)"
+        if [[ -n "$_kernel_release" && -d /boot ]] && compgen -G "/boot/*${_kernel_release}*" >/dev/null; then
+            BOOT_MOUNT_OPTIONS=(-v /boot:/boot:ro)
+        else
+            echo "[INFO] Not mounting /boot; host kernel metadata was not found."
+        fi
+        unset _kernel_release
+        ;;
+    true|1|yes)
+        if [[ -d /boot ]]; then
+            BOOT_MOUNT_OPTIONS=(-v /boot:/boot:ro)
+        else
+            echo "[WARN] MOUNT_BOOT=true but /boot does not exist on the host." >&2
+        fi
+        ;;
+    false|0|no)
+        ;;
+    *)
+        echo "[ERROR] MOUNT_BOOT must be auto, true, or false (got '$MOUNT_BOOT')." >&2
+        exit 1
+        ;;
+esac
 
 DOCKER_RUN_ARGS=(
     --rm

@@ -38,7 +38,16 @@ MAX_RETRIES="${MAX_RETRIES:-10}"
 _get_gpu_pids() {
     local pids=""
     if command -v rocm-smi &>/dev/null; then
-        pids+=" $(rocm-smi --showpids 2>/dev/null | grep -oE '^[0-9]+' | grep -v '^$')"
+        pids+=" $(rocm-smi --showpids 2>/dev/null | awk '
+            /^[0-9]+[[:space:]]/ {
+                # ROCm service agents can appear in --showpids with zero VRAM,
+                # SDMA, and CU usage. They are not training jobs and should not
+                # block preflight GPU cleanup.
+                if ($2 == "gpuagent" && $4 + 0 == 0 && $5 + 0 == 0 && $6 + 0 == 0) {
+                    next
+                }
+                print $1
+            }')"
     fi
     if command -v nvidia-smi &>/dev/null; then
         pids+=" $(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ')"

@@ -1,0 +1,13 @@
+# 2-node smoke config for JAX DeepEP internode dispatch/combine.
+base_config: "deepseek3-671b-proxy.gpu.yml"
+
+steps: 3
+per_device_batch_size: 2
+
+dcn_data_parallelism: 1
+dcn_fsdp_parallelism: 1
+dcn_expert_parallelism: 2
+
+sparse_matmul: True
+use_turbo_grouped_gemm: True
+use_deepep_dispatch: True

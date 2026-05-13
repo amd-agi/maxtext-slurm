@@ -53,11 +53,21 @@ echo "OUTPUT_PATH=$OUTPUT_PATH"
 mkdir -p -v "$OUTPUT_PATH"
 
 # Build associative array from extracted envs so train_env.sh can look up
-# config inputs (e.g. ENABLE_XLA_DUMP) without needing them exported yet.
+# config inputs (e.g. ENABLE_XLA_DUMP).
 declare -A EXTRACTED_ENV_MAP
 for env_pair in "${EXTRACTED_ENVS[@]}"; do
     EXTRACTED_ENV_MAP["${env_pair%%=*}"]="${env_pair#*=}"
 done
+
+# Export once before train_env.sh so command-line env overrides can influence
+# any detection or defaulting logic that runs while train_env.sh is sourced.
+if [ ${#EXTRACTED_ENVS[@]} -gt 0 ]; then
+    echo "Pre-exporting extracted environment variables:"
+    for env_pair in "${EXTRACTED_ENVS[@]}"; do
+        echo "  export $env_pair"
+        export "$env_pair"
+    done
+fi
 
 # ---- Load environment configuration (edit train_env.sh to customize) ----
 source "$SCRIPT_DIR/train_env.sh"
@@ -69,9 +79,10 @@ if [[ -f "$_model_env" ]]; then
     source "$_model_env"
 fi
 
-# Export extracted environment variables (after train_env.sh so overrides win).
+# Re-export extracted environment variables after train_env.sh and per-model
+# env files so command-line overrides still win over local defaults.
 if [ ${#EXTRACTED_ENVS[@]} -gt 0 ]; then
-    echo "Exporting extracted environment variables:"
+    echo "Re-exporting extracted environment variables:"
     for env_pair in "${EXTRACTED_ENVS[@]}"; do
         echo "  export $env_pair"
         export "$env_pair"
@@ -113,6 +124,15 @@ fi
 
 echo "Show all environment variables:"
 printenv | sort
+
+# ---- Minimal rocSHMEM device barrier repro ----
+if [[ "${REPRO_ROCSHMEM_BARRIER_ALL:-0}" =~ ^(1|true|yes|y)$ ]]; then
+    echo "[REPRO_ROCSHMEM_BARRIER_ALL=1] Running minimal rocSHMEM barrier_all repro..."
+    export LOCAL_WORLD_SIZE="${LOCAL_WORLD_SIZE:-$(python3 -c "import hip; print(hip.hipGetDeviceCount()[1])" 2>/dev/null || echo 8)}"
+    export NPROCS=$(( NNODES * LOCAL_WORLD_SIZE ))
+    bash "$SCRIPT_DIR/utils/run_rocshmem_barrier_all_repro.sh"
+    exit $?
+fi
 
 # ============================================================================
 # Launch Training (direct or via Ray actor)

@@ -1,0 +1,9 @@
+# 4-node control config for sparse/Turbo GMM with internode expert parallelism.
+base_config: "deepseek3-671b-proxy-internode-smoke.gpu.yml"
+
+dcn_data_parallelism: 1
+dcn_fsdp_parallelism: 2
+dcn_expert_parallelism: 2
+
+use_deepep_dispatch: False
+attention: dot_product
