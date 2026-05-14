@@ -1,0 +1,14 @@
+# Bench output directories — runs/ holds per-rank stdout logs from each
+# `submit.sh` invocation (typically 16 ranks × 100+ MB on ANP runs).
+# Rebuilt every time you re-run; keep out of git.
+/runs/
+
+# Compiled ELF produced by ./build.sh — rebuilt on demand inside the
+# training container, not part of the source tree.
+/anp_repro
+
+# Common editor / OS leftovers
+*.o
+*.so
+*.swp
+.DS_Store
