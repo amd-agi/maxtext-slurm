@@ -1970,24 +1970,26 @@ bs=1 misses the ~102 GiB usable budget by **only ~10 GiB** — close enough that
 
 #### Summary table (final for 2026-05-08)
 
-| Job | EXTRA_XLA_FLAGS | Status | Step (s) | MFU (%) | TFLOP/s/dev | Δ vs 1524 (296.4) |
-|-----|------------------|--------|---------:|--------:|------------:|-------------------:|
-| 4231 | `--xla_gpu_enable_while_loop_double_buffering=true` | FAILED | -- | -- | -- | (XLA IndexError + LHS over-budget) |
-| 4233 | `--xla_gpu_enable_pipelined_all_gather=true` (alone) | FAILED | -- | -- | -- | (LHS over-budget: 124.6 > 109.4) |
-| 4234 | `--xla_gpu_enable_pipelined_reduce_scatter=true` (alone) | FAILED | -- | -- | -- | (LHS over-budget: 122.3 > 109.4) |
-| 4235 | `--xla_gpu_enable_pipelined_all_reduce=true` (alone) | FAILED | -- | -- | -- | (LHS over-budget: 133.4 > 109.4) |
-| 4236 | `--xla_gpu_enable_highest_priority_async_stream=true` | SUCCESS | 24.30 | 13.13 | 295.5 | -0.3% (Neutral) |
-| 4237 | `--xla_gpu_experimental_parallel_collective_overlap_limit=2` | SUCCESS | 23.98 | 13.31 | 299.5 | +1.0% |
-| 4238 | `--xla_gpu_experimental_parallel_collective_overlap_limit=4` | SUCCESS | 22.24 | 14.35 | 322.8 | **+8.9%** |
-| 4239 | `--xla_gpu_experimental_parallel_collective_overlap_limit=8` | SUCCESS | 23.34 | 13.68 | 307.7 | +3.8% |
-| 4240 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=268435456` (256 MiB) | SUCCESS | 24.50 | 13.03 | 293.2 | -1.1% |
-| 4241 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=536870912` (512 MiB) | SUCCESS | 25.13 | 12.70 | 285.8 | -3.6% |
-| 4242 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=1073741824` (1 GiB) | SUCCESS | 25.18 | 12.68 | 285.2 | -3.8% |
-| 4243 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=2147483648` (2 GiB) | SUCCESS | 25.42 | 12.56 | 282.5 | -4.7% |
-| 4244 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=4294967296` (4 GiB) | SUCCESS | 26.40 | 12.09 | 272.0 | -8.2% |
-| 4245 | `--xla_gpu_all_gather_combine_threshold_bytes=268435456` (AG-only 256 MiB) | SUCCESS | 24.38 | 13.09 | 294.5 | -0.6% |
-| 4246 | `--xla_gpu_all_gather_combine_threshold_bytes=1073741824` (AG-only 1 GiB) | TIMEOUT | -- | -- | -- | (LHS over-budget: 120.6 > 109.4) |
-| 4247 | `--xla_gpu_all_gather_combine_threshold_bytes=4294967296` (AG-only 4 GiB) | CANCELLED | -- | -- | -- | (Reservation end) |
+All Section H rows use the same DS3-671B BF16 cf=1.25 bs=7 baseline (Submit pattern at the end of this section), so `Tok/s/dev = 7 × 4096 / step_time` (see `docs/deepseek3-671b-pdbs-sweep.md` "Tok/s/dev 计算约定" for the derivation and cross-validation).
+
+| Job | EXTRA_XLA_FLAGS | Status | Step (s) | MFU (%) | TFLOP/s/dev | Tok/s/dev | Δ vs 1524 (296.4 / 1,183) |
+|-----|------------------|--------|---------:|--------:|------------:|----------:|---------------------------:|
+| 4231 | `--xla_gpu_enable_while_loop_double_buffering=true` | FAILED | -- | -- | -- | -- | (XLA IndexError + LHS over-budget) |
+| 4233 | `--xla_gpu_enable_pipelined_all_gather=true` (alone) | FAILED | -- | -- | -- | -- | (LHS over-budget: 124.6 > 109.4) |
+| 4234 | `--xla_gpu_enable_pipelined_reduce_scatter=true` (alone) | FAILED | -- | -- | -- | -- | (LHS over-budget: 122.3 > 109.4) |
+| 4235 | `--xla_gpu_enable_pipelined_all_reduce=true` (alone) | FAILED | -- | -- | -- | -- | (LHS over-budget: 133.4 > 109.4) |
+| 4236 | `--xla_gpu_enable_highest_priority_async_stream=true` | SUCCESS | 24.30 | 13.13 | 295.5 | 1,180 | -0.3% (Neutral) |
+| 4237 | `--xla_gpu_experimental_parallel_collective_overlap_limit=2` | SUCCESS | 23.98 | 13.31 | 299.5 | 1,196 | +1.0% |
+| 4238 | `--xla_gpu_experimental_parallel_collective_overlap_limit=4` | SUCCESS | 22.24 | 14.35 | **322.8** | **1,289** | **+8.9%** |
+| 4239 | `--xla_gpu_experimental_parallel_collective_overlap_limit=8` | SUCCESS | 23.34 | 13.68 | 307.7 | 1,228 | +3.8% |
+| 4240 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=268435456` (256 MiB) | SUCCESS | 24.50 | 13.03 | 293.2 | 1,170 | -1.1% |
+| 4241 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=536870912` (512 MiB) | SUCCESS | 25.13 | 12.70 | 285.8 | 1,141 | -3.6% |
+| 4242 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=1073741824` (1 GiB) | SUCCESS | 25.18 | 12.68 | 285.2 | 1,139 | -3.8% |
+| 4243 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=2147483648` (2 GiB) | SUCCESS | 25.42 | 12.56 | 282.5 | 1,128 | -4.7% |
+| 4244 | `--xla_gpu_{ag,rs}_combine_threshold_bytes=4294967296` (4 GiB) | SUCCESS | 26.40 | 12.09 | 272.0 | 1,086 | -8.2% |
+| 4245 | `--xla_gpu_all_gather_combine_threshold_bytes=268435456` (AG-only 256 MiB) | SUCCESS | 24.38 | 13.09 | 294.5 | 1,176 | -0.6% |
+| 4246 | `--xla_gpu_all_gather_combine_threshold_bytes=1073741824` (AG-only 1 GiB) | TIMEOUT | -- | -- | -- | -- | (LHS over-budget: 120.6 > 109.4) |
+| 4247 | `--xla_gpu_all_gather_combine_threshold_bytes=4294967296` (AG-only 4 GiB) | CANCELLED | -- | -- | -- | -- | (Reservation end) |
 
 ### I. XLA Flag Tuning Continued (Jobs 4396-4405)
 
@@ -1998,32 +2000,36 @@ bs=1 misses the ~102 GiB usable budget by **only ~10 GiB** — close enough that
 
 #### Summary table (Jobs 4396-4405)
 
-| Job | EXTRA_XLA_FLAGS / ENV | Status | Step (s) | MFU (%) | TFLOP/s/dev | Notes |
-|-----|-----------------------|--------|---------:|--------:|------------:|:------|
-| 4396 | AG-only 1 GiB + `slop95` | SUCCESS | 25.15 | 12.69 | 285.5 | Rescued 4246 |
-| 4397 | AG-only 4 GiB + `slop95` | SUCCESS | 25.81 | 12.36 | 278.2 | Rescued 4247 |
-| 4398 | `best-combo` (bs=7, cf=1.0) | FAILED | -- | -- | -- | SEGFAULT (LHS over-budget) |
-| 4399 | `pip-ag` + `slop95` | SUCCESS | 26.19 | 12.19 | 274.2 | Rescued 4233 |
-| 4400 | `pip-rs` + `slop95` | SUCCESS | 24.31 | 13.13 | 295.4 | Rescued 4234 |
-| 4401 | `best-combo` (bs=8, cf=1.25) | FAILED | -- | -- | -- | OOM (113.8 GiB allocation) |
-| 4402 | `best-combo` (bs=8, cf=1.0) | FAILED | -- | -- | -- | SEGFAULT (LHS over-budget) |
-| 4403 | bs=8, cf=1.25, `mem95` | SUCCESS | 29.76 | 12.26 | 275.8 | **Unlocked bs=8!** |
-| 4404 | bs=8, cf=1.25, `mem97` | SUCCESS | 29.17 | 12.51 | 281.4 | **Unlocked bs=8!** |
-| 4405 | bs=9, cf=1.0, `mem97` | SUCCESS | 28.99 | 14.15 | 318.4 | **Unlocked bs=9!** |
-| 4406 | `best-combo` (bs=7, cf=1.0) | SUCCESS | 23.42 | 13.63 | 306.7 | `overlap=4, mem97` |
-| 4407 | `best-combo` (bs=8, cf=1.25) | SUCCESS | 28.09 | 12.98 | 292.1 | **Unlocked bs=8 + overlap4!** |
-| 4408 | bs=9, cf=1.25, `mem97` | FAILED | -- | -- | -- | OOM (115.1 GiB allocation) |
-| 4409 | FP8 bs=9, cf=1.0, `mem97` | FAILED | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
-| 4410 | Kimi BF16 bs=2, cf=1.0, `mem97` | SUCCESS | 18.66 | 4.01 | 90.2 | **Unlocked bs=2!** |
-| 4411 | Kimi FP8 bs=2, cf=1.0, `mem97` | SUCCESS | 19.64 | 1.90 | 85.7 | **Unlocked bs=2!** |
-| 4412 | FP8 bs=8, cf=1.25, `overlap4` | FAILED | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
-| 4413 | FP8 bs=9, cf=1.25, `mem97` | SUCCESS | 26.35 | 7.79 | 350.4 | **Unlocked bs=9!** |
-| 4414 | Kimi BF16 bs=2, cf=1.25, `mem97` | SUCCESS | 19.31 | 3.87 | 87.2 | **Unlocked bs=2!** |
-| 4415 | Kimi FP8 bs=2, cf=1.25, `mem97` | SUCCESS | 20.31 | 1.84 | 82.9 | **Unlocked bs=2!** |
-| 4416 | bs=5, cf=2.0, `overlap4` | FAILED | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
-| 4417 | bs=6, cf=2.0, `overlap4` | SUCCESS | 28.43 | 9.62 | 216.5 | **Unlocked bs=6!** |
-| 4418 | bs=2, cf=4.0, `overlap4` | SUCCESS | 20.44 | 4.46 | 100.4 | |
-| 4419 | bs=3, cf=4.0, `overlap4` | SUCCESS | 26.39 | 5.18 | 116.6 | **Unlocked bs=3!** |
+`Tok/s/dev = pdbs × max_target_length / step_time` (max_target_length=4096 for DS3-671B and Kimi-K2-1T; see `docs/deepseek3-671b-pdbs-sweep.md` "Tok/s/dev 计算约定" for derivation and cross-validation against logged values in the main summary tables).
+
+| Job | EXTRA_XLA_FLAGS / ENV | Status | Step (s) | MFU (%) | TFLOP/s/dev | Tok/s/dev | Notes |
+|-----|-----------------------|--------|---------:|--------:|------------:|----------:|:------|
+| 4396 | AG-only 1 GiB + `slop95` | SUCCESS | 25.15 | 12.69 | 285.5 | 1,140 | Rescued 4246 |
+| 4397 | AG-only 4 GiB + `slop95` | SUCCESS | 25.81 | 12.36 | 278.2 | 1,111 | Rescued 4247 |
+| 4398 | `best-combo` (bs=7, cf=1.0) | FAILED | -- | -- | -- | -- | SEGFAULT (LHS over-budget) |
+| 4399 | `pip-ag` + `slop95` | SUCCESS | 26.19 | 12.19 | 274.2 | 1,095 | Rescued 4233 |
+| 4400 | `pip-rs` + `slop95` | SUCCESS | 24.31 | 13.13 | 295.4 | 1,179 | Rescued 4234 |
+| 4401 | `best-combo` (bs=8, cf=1.25) | FAILED | -- | -- | -- | -- | OOM (113.8 GiB allocation) |
+| 4402 | `best-combo` (bs=8, cf=1.0) | FAILED | -- | -- | -- | -- | SEGFAULT (LHS over-budget) |
+| 4403 | bs=8, cf=1.25, `mem95` | SUCCESS | 29.76 | 12.26 | 275.8 | 1,101 | **Unlocked bs=8!** |
+| 4404 | bs=8, cf=1.25, `mem97` | SUCCESS | 29.17 | 12.51 | 281.4 | 1,123 | **Unlocked bs=8!** |
+| 4405 | bs=9, cf=1.0, `mem97` | SUCCESS | 28.99 | **14.15** | **318.4** | **1,272** | **Unlocked bs=9!** |
+| 4406 | `best-combo` (bs=7, cf=1.0) | SUCCESS | 23.42 | 13.63 | 306.7 | 1,224 | `overlap=4, mem97` |
+| 4407 | `best-combo` (bs=8, cf=1.25) | SUCCESS | 28.09 | 12.98 | 292.1 | 1,167 | **Unlocked bs=8 + overlap4!** |
+| 4408 | bs=9, cf=1.25, `mem97` | FAILED | -- | -- | -- | -- | OOM (115.1 GiB allocation) |
+| 4409 | FP8 bs=9, cf=1.0, `mem97` | FAILED | -- | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
+| 4410 | Kimi BF16 bs=2, cf=1.0, `mem97` | SUCCESS | 18.66 | 4.01 | 90.2 | 439 | **Unlocked bs=2!** |
+| 4411 | Kimi FP8 bs=2, cf=1.0, `mem97` | SUCCESS | 19.64 | 1.90* | 85.7 | 417 | **Unlocked bs=2!** |
+| 4412 | FP8 bs=8, cf=1.25, `overlap4` | FAILED | -- | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
+| 4413 | FP8 bs=9, cf=1.25, `mem97` | SUCCESS | 26.35 | 7.79* | **350.4** | **1,399** | **Unlocked bs=9!** |
+| 4414 | Kimi BF16 bs=2, cf=1.25, `mem97` | SUCCESS | 19.31 | 3.87 | 87.2 | 424 | **Unlocked bs=2!** |
+| 4415 | Kimi FP8 bs=2, cf=1.25, `mem97` | SUCCESS | 20.31 | 1.84* | 82.9 | 403 | **Unlocked bs=2!** |
+| 4416 | bs=5, cf=2.0, `overlap4` | FAILED | -- | -- | -- | -- | IBV_WC_RETRY_EXC_ERR |
+| 4417 | bs=6, cf=2.0, `overlap4` | SUCCESS | 28.43 | 9.62 | 216.5 | 864 | **Unlocked bs=6!** |
+| 4418 | bs=2, cf=4.0, `overlap4` | SUCCESS | 20.44 | 4.46 | 100.4 | 401 | |
+| 4419 | bs=3, cf=4.0, `overlap4` | SUCCESS | 26.39 | 5.18 | 116.6 | 466 | **Unlocked bs=3!** |
+
+\* FP8 MFU% relative to FP8 peak (4,500 TFLOP/s for B200). BF16-equivalent MFU = MFU × 2.
 
 **Observations on `slop_factor` vs `mem_fraction`**:
 While `slop_factor=95` successfully rescued Job 4396, we are now testing if raising `XLA_PYTHON_CLIENT_MEM_FRACTION` (the preallocated pool) to `.95` or `.97` provides a more robust path to `bs=8` for BF16, as `slop_factor` only raises the BFC arena ceiling but doesn't increase the physical HBM pool size.
