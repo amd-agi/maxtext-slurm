@@ -128,14 +128,65 @@ TRAIN_ARGS=(
 # Unbuffered output for real-time log streaming
 export PYTHONUNBUFFERED=1
 
+# ---- Optional: wrap Python launch with rocprofv3 ---------------------------
+# Enable via `_env_ROCPROF_TRACE=1` CLI passthrough. Optional tuning:
+#   _env_ROCPROF_OUTDIR=<path>     (default: $OUTPUT_PATH/rocprof)
+#   _env_ROCPROF_DELAY=<sec>       (default: 0   = start at t=0)
+#   _env_ROCPROF_DURATION=<sec>    (default: 0   = treated as "whole run", expanded to 999999s)
+#   _env_ROCPROF_TRACES=<csv>      (default: kernel,hip,rccl,marker -> --<X>-trace each)
+# Per-node, per-PID traces at $ROCPROF_OUTDIR/<host>/<pid>/.
+#
+# Constraints for rocprofv3 v1.0.0 in rocm/jax-training:maxtext-v26.2:
+#   1. Without `--collection-period`, only HIP compiler-side events are
+#      captured (no kernel/rccl/marker CSV). The wrapper ALWAYS passes it.
+#   2. `--sys-trace` and `--stats --summary` SUPPRESS per-domain trace CSV
+#      output; use explicit per-domain `--<X>-trace` flags instead. Kernel
+#      statistics are derived from kernel_trace.csv via post-processing
+#      (utils/rocprof_kernel_stats.py).
+#   3. Output dir uses `%hostname%/%pid%` so each rocprofv3 instance (parent
+#      python + any sh subprocesses for ldconfig etc.) writes to its own
+#      subdir. Without this isolation, a short-lived subprocess's Perfetto
+#      session finalize closes the shared session, leaving the parent unable
+#      to write its `<pid>_results.pftrace`. `%env{SLURM_PROCID}%` silently
+#      falls back to hostname in v1, so it cannot be used here.
+PROF_CMD=()
+if [[ "${ROCPROF_TRACE:-0}" == "1" ]]; then
+    ROCPROF_OUTDIR="${ROCPROF_OUTDIR:-$OUTPUT_PATH/rocprof}"
+    ROCPROF_DELAY="${ROCPROF_DELAY:-0}"
+    ROCPROF_DURATION="${ROCPROF_DURATION:-0}"
+    ROCPROF_TRACES="${ROCPROF_TRACES:-kernel,hip,rccl,marker}"
+    mkdir -p -v "$ROCPROF_OUTDIR"
+    chmod a+w "$ROCPROF_OUTDIR" 2>/dev/null || true
+    PROF_CMD=(rocprofv3
+        --output-format pftrace csv
+        --output-directory "${ROCPROF_OUTDIR}/%hostname%/%pid%"
+    )
+    _eff_duration="$ROCPROF_DURATION"
+    [[ "$_eff_duration" == "0" ]] && _eff_duration=999999
+    PROF_CMD+=(--collection-period "${ROCPROF_DELAY}:${_eff_duration}:1")
+    unset _eff_duration
+    IFS=',' read -ra _TRACE_KINDS <<< "$ROCPROF_TRACES"
+    for kind in "${_TRACE_KINDS[@]}"; do
+        PROF_CMD+=("--${kind}-trace")
+    done
+    unset _TRACE_KINDS
+    PROF_CMD+=(--)
+    echo "[rocprofv3] wrapping python launch"
+    echo "[rocprofv3]   outdir    = $ROCPROF_OUTDIR"
+    echo "[rocprofv3]   delay     = ${ROCPROF_DELAY}s"
+    echo "[rocprofv3]   duration  = ${ROCPROF_DURATION}s (0 = whole run)"
+    echo "[rocprofv3]   traces    = $ROCPROF_TRACES"
+    echo "[rocprofv3]   full cmd  = ${PROF_CMD[*]}"
+fi
+
 if [[ "${USE_RAY:-false}" == "true" ]]; then
     # Ray Actor Mode: actor launches training in a subprocess (no GIL contention)
     # Enables: GPU monitoring, flame graphs via py-spy --subprocesses
     echo "Launching via Ray actor..."
     export RAY_DEDUP_LOGS=0
-    python3 -u "$SCRIPT_DIR/_ray_actor.py" "${TRAIN_ARGS[@]}"
+    "${PROF_CMD[@]}" python3 -u "$SCRIPT_DIR/_ray_actor.py" "${TRAIN_ARGS[@]}"
 else
     # Direct Mode (with MFU tracking)
     echo "Launching MaxText.train directly..."
-    python3 -u "$SCRIPT_DIR/utils/mfu_tracker.py" "${TRAIN_ARGS[@]}"
+    "${PROF_CMD[@]}" python3 -u "$SCRIPT_DIR/utils/mfu_tracker.py" "${TRAIN_ARGS[@]}"
 fi
