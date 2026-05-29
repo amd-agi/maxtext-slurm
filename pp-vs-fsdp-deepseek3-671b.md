@@ -25,7 +25,7 @@ All three configs we test are MoE — they differ in which **MoE implementation*
 | **`dense-cf1.25`** (capacity-factor dropping) | 1207.9 (14629) — `ag=1 GiB` | **1224.1** avg n=2 (14672/14673) ⭐ — `overlap2` alone | **PP=8 (+1.34 %)** |
 | **`sparse-gmm-fixed`** (ragged_dot dropless) | OOM @217 GiB temp | OOM @217 GiB temp | n/a |
 
-**The two winning XLA flags have opposite signs across topologies** — leaving the FSDP-tuned `--xla_gpu_all_gather_combine_threshold_bytes=1073741824` deployed unconditionally (as it currently is in `configs/deepseek3-671b.env.sh`) silently degrades PP=8 dense by **-6.6 %** and PP=8 sgd-v3 by -1.0 % (in jitter). The recipe must be guarded by topology (and, for PP, by MoE branch) — see [§ Recommended deployment](#recommended-deployment).
+**The two winning XLA flags have opposite signs across topologies** — leaving the FSDP-tuned `--xla_gpu_all_gather_combine_threshold_bytes=1073741824` deployed unconditionally silently degrades PP=8 dense by **-6.6 %** and PP=8 sgd-v3 by -1.0 % (in jitter). The recipe must be guarded by topology (and, for PP, by MoE branch); `configs/deepseek3-671b.env.sh` now does this automatically by inspecting `PASSTHROUGH_ARGS` — see [§ Recommended deployment](#recommended-deployment).
 
 The other operational findings:
 
@@ -240,7 +240,7 @@ The 4/30 FSDP=8 sweep committed `--xla_gpu_all_gather_combine_threshold_bytes=10
 
 The mechanism is path-dependent. For FSDP=8, the all-gather is over the full DCN ring (8 nodes × 8 GPUs) of expert weights, so collapsing it into one 8 GiB call creates a hard barrier; splitting to 1 GiB lets XLA's latency-hiding scheduler interleave the chunks with per-layer compute (+11.6 to +20.5 %). For PP=8, the all-gather is at ICI (intra-node, replica_groups=[8,8] over the `ici_expert_parallelism=8` axis) over a much smaller per-stage weight tensor; smaller chunks don't help here and just add RCCL launch overhead.
 
-So `configs/deepseek3-671b.env.sh` must be guarded by topology before it can be safely applied to all `deepseek3-671b` submissions — see [§ Recommended deployment](#recommended-deployment).
+So `configs/deepseek3-671b.env.sh` is guarded by topology so it can be safely applied to all `deepseek3-671b` submissions — see [§ Recommended deployment](#recommended-deployment).
 
 ### sgd-v3 PP=8 leaderboard (pinned 8-node nodelist, pdbs=7, steps 9-14)
 
@@ -388,45 +388,46 @@ YAML default `remat_policy: 'full'` (slowest recompute, lowest HBM) was suspecte
 
 ## Recommended deployment
 
-The recipe is path × topology × branch dependent, so the per-model env file needs three branches:
+The recipe is path × topology × branch dependent, so the per-model env file needs three branches. This is **implemented** in `configs/deepseek3-671b.env.sh`. Rather than the (non-existent) `MAXTEXT_*` env vars, it resolves the effective config the same way MaxText does — **the `gpu.yml` value is the base, a CLI passthrough arg overrides it** — so it is correct whether topology is set on the CLI *or* edited directly into the gpu.yml, and needs no extra plumbing in `submit.sh` / `_train.sh` (`PASSTHROUGH_ARGS` is already populated before the per-model env file is sourced):
 
 ```bash
-# configs/deepseek3-671b.env.sh — split by topology axis and MoE branch
-if [[ "${MAXTEXT_DCN_PP:-1}" -le 1 ]]; then
+# configs/deepseek3-671b.env.sh — auto-split by topology axis and MoE branch.
+# _ds_cfg KEY FALLBACK -> gpu.yml base value, overridden by a CLI passthrough arg.
+_ds_yml="${BASH_SOURCE[0]%.env.sh}.gpu.yml"
+_ds_cfg() {
+    local key="$1" val="" a
+    [[ -f "$_ds_yml" ]] && { val="$(sed -n "s/^[[:space:]]*${key}[[:space:]]*:[[:space:]]*\([^#]*\).*/\1/p" "$_ds_yml" | tail -n1)"; val="${val%"${val##*[![:space:]]}"}"; }
+    for a in "${PASSTHROUGH_ARGS[@]:-}"; do [[ "$a" == "${key}="* ]] && val="${a#*=}"; done
+    printf '%s' "${val:-$2}"
+}
+_ds_pp=1
+for _ds_k in dcn_pipeline_parallelism ici_pipeline_parallelism; do
+    _ds_v="$(_ds_cfg "$_ds_k" 1)"; [[ "$_ds_v" =~ ^[0-9]+$ && "$_ds_v" -gt "$_ds_pp" ]] && _ds_pp="$_ds_v"
+done
+_ds_sparse=false
+for _ds_k in sparse_matmul use_turbo_deepep_dispatch; do
+    [[ "$(_ds_cfg "$_ds_k" false)" =~ ^[Tt][Rr][Uu][Ee]$ ]] && _ds_sparse=true
+done
+if [[ "${_ds_pp:-1}" -le 1 ]]; then
     # FSDP=8 path: keep the +11.6 % / +20.5 % all-gather combiner win.
     XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_gpu_all_gather_combine_threshold_bytes=1073741824"
 else
     # PP=8 path: image default ag=8 GiB + overlap2 (universal sgd-v3 + dense win).
-    # async_priority is BRANCH-DEPENDENT — helps sgd-v3 (+1.5 %) but HURTS dense (-2.7 %).
     XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_gpu_experimental_parallel_collective_overlap_limit=2"
-    if [[ "${MAXTEXT_USE_DEEPEP_DISPATCH:-false}" == "true" || "${MAXTEXT_SPARSE_MATMUL:-false}" == "true" ]]; then
-        # sgd-v3 (DeepEP / sparse_matmul) only — async_priority addresses MoE skew straggler wait.
-        XLA_FLAGS="$XLA_FLAGS --xla_gpu_enable_highest_priority_async_stream=true"
-    fi
-    # dense-cf1.25 (`sparse_matmul=False`): no async_priority — uniform per-stage compute makes
-    # the async-stream priority bump counter-productive (loses some scheduler flexibility).
+    # async_priority is BRANCH-DEPENDENT — helps sgd-v3 (+1.5 %) but HURTS dense (-2.7 %).
+    [[ "$_ds_sparse" == "true" ]] && XLA_FLAGS="$XLA_FLAGS --xla_gpu_enable_highest_priority_async_stream=true"
 fi
 export XLA_FLAGS
 ```
 
-**Caveat**: `submit.sh` doesn't currently propagate `MAXTEXT_DCN_PP` / `MAXTEXT_USE_DEEPEP_DISPATCH` / `MAXTEXT_SPARSE_MATMUL` as plain env vars (they're MaxText config keys passed through `--`). The guard variable names need to be coordinated with `submit.sh` / `_train.sh` — e.g., `_env_PP_TOPOLOGY=pp` could be the user-side hint, set automatically in `_job.sbatch` or in a wrapper script when `dcn_pipeline_parallelism=8` is detected in the passthrough args. Until that mechanism lands, the conservative fallback is to leave `configs/deepseek3-671b.env.sh` FSDP-only (its current state) and add a CLI override for PP=8 runs:
-
-```bash
-RAY=1 ./submit.sh deepseek3-671b:pp8-prod ... -- \
-    per_device_batch_size=7 sparse_matmul=true use_turbo_grouped_gemm=true use_deepep_dispatch=true \
-    dcn_pipeline_parallelism=8 dcn_fsdp_parallelism=1 \
-    _env_TUNE_PROFILE=pp8-d_overlap2_async   # for sgd-v3
-    # OR _env_TUNE_PROFILE=pp8-dense_d_overlap2   # for dense-cf1.25 (overlap2 alone is enough)
-```
-
-This requires keeping `pp8-*` `TUNE_PROFILE` blocks in `train_env.sh` (which currently has them).
+Default topology is FSDP=8 (the gpu.yml default); PP is detected when the effective `dcn_pipeline_parallelism` / `ici_pipeline_parallelism` > 1 (from either source), and the sparse/DeepEP async-priority extra when the effective `sparse_matmul` / `use_turbo_deepep_dispatch` is true. No per-run `_env_TUNE_PROFILE` override or `pp8-*` `train_env.sh` block is needed for the production recipe.
 
 ## Recommendations
 
 1. **For production sgd-v3 (DeepEP dropless): use FSDP=8 pdbs=7 + `--xla_gpu_all_gather_combine_threshold_bytes=1073741824`.** This recipe lands at 1135.7 TGS (+11.6 % over clean baseline, +3.5 % over the historical Apr-14 baseline of 1097). PP=8 cannot match this on the dropless path within the editable scope (Primus-Turbo + MaxText `moe.py`); closing the gap requires framework-level changes (rewrite `pipeline.py` to use explicit non-blocking `psend/precv`, or replace `nn.vmap`-of-`shard_map` composition with a custom pipeline schedule).
 2. **For production `dense-cf1.25` (dense_matmul + capacity-factor dropping): use PP=8 + `--xla_gpu_experimental_parallel_collective_overlap_limit=2` ALONE on image-default XLA.** This recipe lands at 1224.1 TGS avg (n=2), beating FSDP=8 dense production (1207.9) by +1.34 %. **Do NOT inherit** the FSDP-tuned `ag=1 GiB` flag for this path — it costs -6.6 %. Adding `async_priority` HURTS dense by -2.7 %, so the simpler 1-flag recipe is correct for dense.
 3. **For PP=8 sgd-v3 (when FSDP-feasibility forces PP): use `overlap_limit=2 + --xla_gpu_enable_highest_priority_async_stream=true` on image defaults.** This stack hits +4.66 % over the production-state baseline. The 4-flag stack adds only +0.1 % more, so the simpler 2-flag recipe is preferred. The remaining ~12 % gap to FSDP=8 sgd-v3 is structural (DeepEP per-microbatch cost + scan-carry serialization + pipeline bubble) and is not addressable via XLA / NCCL knobs at this stack level.
-4. **Make `configs/deepseek3-671b.env.sh` (the FSDP-tuned `ag=1 GiB` flag) conditional on `dcn_pipeline_parallelism <= 1`.** The flag is +11.6 % / +20.5 % on FSDP=8 but **-1.0 % / -6.6 % on PP=8** (sign flip) — leaving it universal silently degrades PP=8 dense production by 6.6 %. See the deployment block above for the recommended split.
+4. **`configs/deepseek3-671b.env.sh` selects the recipe conditional on `dcn_pipeline_parallelism <= 1` (done).** The FSDP-tuned `ag=1 GiB` flag is +11.6 % / +20.5 % on FSDP=8 but **-1.0 % / -6.6 % on PP=8** (sign flip) — leaving it universal silently degrades PP=8 dense production by 6.6 %, so the file now auto-detects topology (via `PASSTHROUGH_ARGS`) and applies the matching recipe. See the deployment block above.
 5. **Keep `remat_policy: 'full'` at pdbs=7 across BOTH topologies and BOTH branches.** The activation-memory blow-up factor under both `nn.scan`-PP and `scan_layers=True`-FSDP is ~56-58×, so OOM thresholds are nearly identical. The single non-OOM alternative (`save_out_proj`) regresses 2.4-13.1 % everywhere and additionally diverges loss under FSDP=8.
 6. **Don't use `pp_p2p`, `overlap_limit≥4`, `nccl_chan8`, or any `pipelined_*=true` on PP=8.** All are negative or OOM. The FSDP=8 ranking of these flags does NOT transfer to PP=8 — sign flips are common (overlap2: FSDP -4.14 % → PP +3.38 %; nccl_chan8: FSDP +4.26 % → PP -1.74 %; pp_p2p: FSDP no-op → PP -5.31 %; NCCL_PROTO=Simple: FSDP -1.34 % → PP +3.34 %).
 7. **Keep the upstream `combine_hang` fix.** It is required for production correctness on long runs; the ≤0.5 % steady-state cost is negligible.

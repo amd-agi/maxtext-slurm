@@ -19,10 +19,10 @@ fi
 # ── end Registry credentials ──────────────────────────────────────────────────
 
 # ── Docker image ──────────────────────────────────────────────────────────────
-DOCKER_IMAGE="${DOCKER_IMAGE:-/mnt/vast/yihuang/ppfix-hangfix-deepep-gmm-maxtext-v26.2.tar}"
+DOCKER_IMAGE="${DOCKER_IMAGE:-/mnt/vast/yihuang/c6f2df3d-deepep-gmm-maxtext-v26.2.tar}"
 USE_DOCKER_IMAGE_AINIC_DRIVER="${USE_DOCKER_IMAGE_AINIC_DRIVER:-true}"    # Use the container's built-in AINIC driver; set to false to bind-mount host IB libs instead (needed when container libionic1 mismatches host firmware)
 MAXTEXT_REPO_DIR="${MAXTEXT_REPO_DIR:-/workspace/maxtext}"                # MaxText location inside the container
-MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH-yihuang/moe-turbo-gmm-and-deepep-v3}"                           # Global patch branch (explicit empty = skip checkout, use image default); per-model .env.sh can override
+MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH-feature/primus-turbo-gmm-deepep-integration}"                           # Global patch branch (explicit empty = skip checkout, use image default); per-model .env.sh can override
 # ── end Docker image ──────────────────────────────────────────────────────────
 
 # ── Host paths to mount ───────────────────────────────────────────────────────
