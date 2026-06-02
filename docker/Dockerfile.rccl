@@ -1,0 +1,55 @@
+# Upgrade RCCL inside rocm/jax-training:maxtext-v26.2 to include ROCm/rccl PR #2063
+# ("Use one side stream per process" — avoids RCCL creating/destroying thousands of
+# streams that interfere with HIP graph capture).
+#
+# Built against the IN-IMAGE ROCm (7.1.1) for gfx950 only, installed over /opt/rocm,
+# keeping the librccl.so.1 soname so jaxlib picks it up automatically.
+# The base image's RCCL is 2.27.7; the pinned commit is still 2.27.7 (the fix landed
+# on develop before the 2.28 bump), so this is a drop-in same-version replacement.
+#
+# Build:
+#   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.rccl \
+#     -t rocm/jax-training:maxtext-v26.2-rccl-pr2063 .
+# Override the ref/arch if needed:
+#   --build-arg RCCL_COMMIT=<sha> --build-arg GFX=gfx942
+
+ARG BASE=rocm/jax-training:maxtext-v26.2
+FROM ${BASE}
+
+# Pin a commit SHA (default = PR #2063 merge commit on develop; RCCL 2.27.7 + fix).
+ARG RCCL_COMMIT=185e78a8f0d57294f3ec6e51882c32ab2298ea43
+ARG GFX=gfx950
+
+LABEL rccl.upgrade="2.27.7+pr2063" \
+      rccl.commit="185e78a8f0d57294f3ec6e51882c32ab2298ea43" \
+      rccl.base="rocm/jax-training:maxtext-v26.2"
+
+# NOTE: the base image already provides hipcc, cmake, git, rocm-cmake and libibverbs,
+# so no apt-get is required. (If a future base lacks them, add an apt-get step here.)
+RUN set -eux; \
+    # 1) fetch the exact pinned commit (fetch-by-sha is enabled on the public repo)
+    mkdir -p /tmp/rccl && cd /tmp/rccl; \
+    git init -q; \
+    git remote add origin https://github.com/ROCm/rccl; \
+    git fetch --depth 1 origin "${RCCL_COMMIT}"; \
+    git checkout -q FETCH_HEAD; \
+    # 2) configure against /opt/rocm, build ONLY gfx950, install over /opt/rocm
+    mkdir build && cd build; \
+    CXX=/opt/rocm/bin/hipcc cmake \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/rocm \
+        -DCMAKE_PREFIX_PATH=/opt/rocm \
+        -DGPU_TARGETS="${GFX}" \
+        ..; \
+    make -j"$(nproc)"; \
+    make install; \
+    # 3) the standalone build installs librccl.so.1.0; the base shipped
+    #    librccl.so.1.0.70101. Remove the old packaged file so ldconfig points the
+    #    librccl.so.1 soname at our build (otherwise 1.0.70101 version-sorts ahead).
+    find /opt/rocm/lib -maxdepth 1 -name 'librccl.so.1.*' ! -name 'librccl.so.1.0' -delete; \
+    ldconfig; \
+    # 4) self-check: soname resolves to our build and the binary carries the PR commit
+    test "$(readlink /opt/rocm/lib/librccl.so.1)" = "librccl.so.1.0"; \
+    strings /opt/rocm/lib/librccl.so.1 | grep -q "$(printf '%s' "${RCCL_COMMIT}" | cut -c1-7)"; \
+    # 5) drop the build tree so the layer stays small
+    rm -rf /tmp/rccl
