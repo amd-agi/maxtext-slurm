@@ -315,6 +315,29 @@ else
     fi
 fi
 
+# --- Surgical ionic provider swap (glibc-safe alternative to the broad =false mount) ---
+# Mount ONLY the host's rdma-core ionic provider (.so) over the container's, so the
+# container's libibverbs negotiates the host kernel's verbs ABI. Unlike the broad
+# USE_DOCKER_IMAGE_AINIC_DRIVER=false mount (which also pulls in the host's glibc and
+# breaks images whose glibc is newer than the host's, e.g. DLC host 2.35 vs image 2.39),
+# this touches a single file. Use with USE_DOCKER_IMAGE_AINIC_DRIVER=true (no broad mount).
+IONIC_PROVIDER_MOUNT_OPTIONS=()
+if [[ "${USE_HOST_IONIC_PROVIDER_ONLY:-false}" == "true" ]]; then
+    _ionic_link=""
+    for _d in /usr/lib/x86_64-linux-gnu/libibverbs /usr/lib64/libibverbs /usr/lib/libibverbs; do
+        for _p in "$_d"/libionic-rdmav*.so; do
+            [[ -e "$_p" ]] && { _ionic_link="$_p"; break 2; }
+        done
+    done
+    if [[ -n "$_ionic_link" ]]; then
+        _ionic_real="$(readlink -f "$_ionic_link")"
+        echo "[IONIC] Surgical provider swap: host $_ionic_real -> container $_ionic_link (verbs ABI match, glibc untouched)."
+        IONIC_PROVIDER_MOUNT_OPTIONS=(-v "$_ionic_real":"$_ionic_link":ro)
+    else
+        echo "[IONIC] WARN: USE_HOST_IONIC_PROVIDER_ONLY=true but no host libionic-rdmav*.so found; skipping."
+    fi
+fi
+
 # InfiniBand device passthrough (safe if IB is absent)
 IB_DEVICE_OPTIONS=()
 if [[ -e /dev/infiniband ]]; then
@@ -409,6 +432,7 @@ DOCKER_RUN_ARGS=(
     --env "JOB_ID=$JOB_ID"
     "${GROUP_ADD_ARGS[@]}"
     "${IB_MOUNT_OPTIONS[@]}"
+    "${IONIC_PROVIDER_MOUNT_OPTIONS[@]}"
     "${DATASET_MOUNT_OPTIONS[@]}"
     "${COREDUMP_MOUNT_OPTIONS[@]}"
     "${REPO_MOUNT_OPTIONS[@]}"

@@ -16,11 +16,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # DLC cluster
-# JOB_WORKSPACE="${JOB_WORKSPACE:-/perf_apps/xuefjian_maxtext}"
-# PARTITION="${PARTITION:-Compute-DCPT}"
+JOB_WORKSPACE="${JOB_WORKSPACE:-/perf_apps/xuefjian_maxtext}"
+PARTITION="${PARTITION:-Compute-DCPT}"
 # Vultr cluster
-JOB_WORKSPACE="${JOB_WORKSPACE:-/mnt/vast/xuefei_maxtext}"
-PARTITION="${PARTITION:-k8s}"
+# JOB_WORKSPACE="${JOB_WORKSPACE:-/mnt/vast/xuefei_maxtext}"
+# PARTITION="${PARTITION:-k8s}"
 NODES="${NODES:-8}"
 TAG="${TAG:-run8n}"
 STEPS="${STEPS:-15}"
