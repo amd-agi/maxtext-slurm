@@ -133,16 +133,19 @@ export PYTHONUNBUFFERED=1
 #   _env_ROCPROF_OUTDIR=<path>     (default: $OUTPUT_PATH/rocprof)
 #   _env_ROCPROF_DELAY=<sec>       (default: 0   = start at t=0)
 #   _env_ROCPROF_DURATION=<sec>    (default: 0   = treated as "whole run", expanded to 999999s)
-#   _env_ROCPROF_TRACES=<csv>      (default: kernel,hip,rccl,marker -> --<X>-trace each)
+#   _env_ROCPROF_TRACES=<csv>      (default: runtime -> --runtime-trace; csv like kernel,hip -> --<X>-trace each)
 # Per-node, per-PID traces at $ROCPROF_OUTDIR/<host>/<pid>/.
 #
 # Constraints for rocprofv3 v1.0.0 in rocm/jax-training:maxtext-v26.2:
 #   1. Without `--collection-period`, only HIP compiler-side events are
 #      captured (no kernel/rccl/marker CSV). The wrapper ALWAYS passes it.
-#   2. `--sys-trace` and `--stats --summary` SUPPRESS per-domain trace CSV
-#      output; use explicit per-domain `--<X>-trace` flags instead. Kernel
-#      statistics are derived from kernel_trace.csv via post-processing
-#      (utils/rocprof_kernel_stats.py).
+#   2. Use `--runtime-trace` (the default): it records HIP/RCCL/marker APIs,
+#      memory ops, AND kernel dispatches, so the .pftrace shows GPU kernels
+#      (GEMM/RCCL/attention) in Perfetto AND still emits the per-domain CSVs
+#      (kernel_trace.csv etc.). Per-domain `--kernel-trace ...` flags leave the
+#      .pftrace WITHOUT kernel slices (kernels go to CSV only). Kernel stats:
+#      utils/rocprof_kernel_stats.py over kernel_trace.csv. (`--sys-trace` also
+#      adds HSA + HIP-compiler; `--stats --summary` would suppress the CSVs.)
 #   3. Output dir uses `%hostname%/%pid%` so each rocprofv3 instance (parent
 #      python + any sh subprocesses for ldconfig etc.) writes to its own
 #      subdir. Without this isolation, a short-lived subprocess's Perfetto
@@ -154,7 +157,7 @@ if [[ "${ROCPROF_TRACE:-0}" == "1" ]]; then
     ROCPROF_OUTDIR="${ROCPROF_OUTDIR:-$OUTPUT_PATH/rocprof}"
     ROCPROF_DELAY="${ROCPROF_DELAY:-0}"
     ROCPROF_DURATION="${ROCPROF_DURATION:-0}"
-    ROCPROF_TRACES="${ROCPROF_TRACES:-kernel,hip,rccl,marker}"
+    ROCPROF_TRACES="${ROCPROF_TRACES:-runtime}"
     mkdir -p -v "$ROCPROF_OUTDIR"
     chmod a+w "$ROCPROF_OUTDIR" 2>/dev/null || true
     PROF_CMD=(rocprofv3
