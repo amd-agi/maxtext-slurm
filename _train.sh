@@ -131,21 +131,26 @@ export PYTHONUNBUFFERED=1
 # ---- Optional: wrap Python launch with rocprofv3 ---------------------------
 # Enable via `_env_ROCPROF_TRACE=1` CLI passthrough. Optional tuning:
 #   _env_ROCPROF_OUTDIR=<path>     (default: $OUTPUT_PATH/rocprof)
-#   _env_ROCPROF_DELAY=<sec>       (default: 0   = start at t=0)
-#   _env_ROCPROF_DURATION=<sec>    (default: 0   = treated as "whole run", expanded to 999999s)
-#   _env_ROCPROF_TRACES=<csv>      (default: runtime -> --runtime-trace; csv like kernel,hip -> --<X>-trace each)
+#   _env_ROCPROF_DELAY=<sec>       (optional; unset = no start delay)
+#   _env_ROCPROF_DURATION=<sec>    (optional; unset = no window. Setting DELAY or DURATION adds --collection-period; default = none)
+#   _env_ROCPROF_TRACES=<csv>      (default: kernel,rccl,marker -> --<X>-trace each; or e.g. runtime -> --runtime-trace)
 # Per-node, per-PID traces at $ROCPROF_OUTDIR/<host>/<pid>/.
 #
 # Constraints for rocprofv3 v1.0.0 in rocm/jax-training:maxtext-v26.2:
-#   1. Without `--collection-period`, only HIP compiler-side events are
-#      captured (no kernel/rccl/marker CSV). The wrapper ALWAYS passes it.
-#   2. Use `--runtime-trace` (the default): it records HIP/RCCL/marker APIs,
-#      memory ops, AND kernel dispatches, so the .pftrace shows GPU kernels
-#      (GEMM/RCCL/attention) in Perfetto AND still emits the per-domain CSVs
-#      (kernel_trace.csv etc.). Per-domain `--kernel-trace ...` flags leave the
-#      .pftrace WITHOUT kernel slices (kernels go to CSV only). Kernel stats:
-#      utils/rocprof_kernel_stats.py over kernel_trace.csv. (`--sys-trace` also
-#      adds HSA + HIP-compiler; `--stats --summary` would suppress the CSVs.)
+#   1. `--collection-period` is OPT-IN (added only when DELAY/DURATION is set). The
+#      doc's application-tracing examples never use it; forcing it -- especially
+#      with a non-zero delay -- can produce an EMPTY trace on rocprofv3 v1.0.0.
+#   2. Default ROCPROF_TRACES=kernel,rccl,marker (per-domain). --kernel-trace already
+#      holds ALL GPU kernels (GEMM, attention, AND RCCL ncclDevKernel); --rccl-trace
+#      adds host RCCL API; --marker-trace adds ROCTx region labels. This lean set
+#      keeps the .pftrace under the default 1GB perfetto buffer. The high-volume
+#      HIP-API/memory domains (or --runtime-trace) OVERFLOW that buffer at 405B scale
+#      and silently drop the KERNEL_DISPATCH domain from the .pftrace (per-domain
+#      CSVs are unaffected). Verified: lean per-domain keeps GPU kernels in the
+#      .pftrace (405B steps=3 -> 731MB, GEMM+attn+RCCL present); the older "runtime,
+#      whole-run" 405B trace was 1189MB and lost all kernels. Kernel stats:
+#      utils/rocprof_kernel_stats.py over kernel_trace.csv. For more steps/domains the
+#      trace can exceed 1GB; trim domains/steps or raise the perfetto buffer.
 #   3. Output dir uses `%hostname%/%pid%` so each rocprofv3 instance (parent
 #      python + any sh subprocesses for ldconfig etc.) writes to its own
 #      subdir. Without this isolation, a short-lived subprocess's Perfetto
@@ -155,19 +160,23 @@ export PYTHONUNBUFFERED=1
 PROF_CMD=()
 if [[ "${ROCPROF_TRACE:-0}" == "1" ]]; then
     ROCPROF_OUTDIR="${ROCPROF_OUTDIR:-$OUTPUT_PATH/rocprof}"
-    ROCPROF_DELAY="${ROCPROF_DELAY:-0}"
-    ROCPROF_DURATION="${ROCPROF_DURATION:-0}"
-    ROCPROF_TRACES="${ROCPROF_TRACES:-runtime}"
+    ROCPROF_DELAY="${ROCPROF_DELAY:-}"
+    ROCPROF_DURATION="${ROCPROF_DURATION:-}"
+    ROCPROF_TRACES="${ROCPROF_TRACES:-kernel,rccl,marker}"
     mkdir -p -v "$ROCPROF_OUTDIR"
     chmod a+w "$ROCPROF_OUTDIR" 2>/dev/null || true
     PROF_CMD=(rocprofv3
         --output-format pftrace csv
         --output-directory "${ROCPROF_OUTDIR}/%hostname%/%pid%"
     )
-    _eff_duration="$ROCPROF_DURATION"
-    [[ "$_eff_duration" == "0" ]] && _eff_duration=999999
-    PROF_CMD+=(--collection-period "${ROCPROF_DELAY}:${_eff_duration}:1")
-    unset _eff_duration
+    # Optional time-window (OPT-IN): only add --collection-period when DELAY or
+    # DURATION is explicitly set. Default = no window = canonical tracing.
+    if [[ -n "$ROCPROF_DELAY" || -n "$ROCPROF_DURATION" ]]; then
+        _eff_duration="${ROCPROF_DURATION:-0}"
+        [[ "$_eff_duration" == "0" ]] && _eff_duration=999999
+        PROF_CMD+=(--collection-period "${ROCPROF_DELAY:-0}:${_eff_duration}:1")
+        unset _eff_duration
+    fi
     IFS=',' read -ra _TRACE_KINDS <<< "$ROCPROF_TRACES"
     for kind in "${_TRACE_KINDS[@]}"; do
         PROF_CMD+=("--${kind}-trace")
@@ -176,8 +185,7 @@ if [[ "${ROCPROF_TRACE:-0}" == "1" ]]; then
     PROF_CMD+=(--)
     echo "[rocprofv3] wrapping python launch"
     echo "[rocprofv3]   outdir    = $ROCPROF_OUTDIR"
-    echo "[rocprofv3]   delay     = ${ROCPROF_DELAY}s"
-    echo "[rocprofv3]   duration  = ${ROCPROF_DURATION}s (0 = whole run)"
+    echo "[rocprofv3]   window    = delay='${ROCPROF_DELAY}' duration='${ROCPROF_DURATION}' (empty = no --collection-period)"
     echo "[rocprofv3]   traces    = $ROCPROF_TRACES"
     echo "[rocprofv3]   full cmd  = ${PROF_CMD[*]}"
 fi
