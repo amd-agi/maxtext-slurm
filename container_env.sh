@@ -20,7 +20,7 @@ fi
 
 # ── Docker image ──────────────────────────────────────────────────────────────
 DOCKER_IMAGE="${DOCKER_IMAGE:-rocm/pyt-megatron-lm-jax-nightly-private:maxtext-v26.2-rccl-pr2063}"
-USE_DOCKER_IMAGE_AINIC_DRIVER="${USE_DOCKER_IMAGE_AINIC_DRIVER:-true}"    # Use the container's built-in AINIC driver; set to false to bind-mount host IB libs instead (needed when container libionic1 mismatches host firmware)
+USE_DOCKER_IMAGE_AINIC_DRIVER="${USE_DOCKER_IMAGE_AINIC_DRIVER:-false}"   # false = bind-mount host IB libs. On this MI355X/ionic cluster the host kernel verbs ABI is 1 but the image's rdma-core ionic provider expects ABI 4 -> "libibverbs ... kernel ABI of 1" warning + RDMA disabled (RCCL falls back to TCP sockets, ~9.7% MFU). false makes RCCL use RoCE over the 8 ionic NICs (verified ~33% MFU). Set true only on a cluster whose container provider matches the host kernel ABI.
 MAXTEXT_REPO_DIR="${MAXTEXT_REPO_DIR:-/workspace/maxtext}"  # MaxText location inside the container
 MAXTEXT_PATCH_BRANCH="${MAXTEXT_PATCH_BRANCH:-}"            # Global patch branch (empty = image default); per-model .env.sh can override
 # ── end Docker image ──────────────────────────────────────────────────────────
@@ -34,7 +34,8 @@ if [[ -n "${COREDUMP_EXTRA_DIRS:-}" ]]; then
     IFS=',' read -ra COREDUMP_EXTRA_DIRS <<< "$COREDUMP_EXTRA_DIRS"
 else
     COREDUMP_EXTRA_DIRS=(
-        "/perf_apps/maxtext_coredump"             # DLC cluster
+        # "/perf_apps/maxtext_coredump"           # DLC cluster
+        "/mnt/vast/xuefei_maxtext/coredump"       # Vultr cluster
     )
 fi
 # ── end Host paths to mount ───────────────────────────────────────────────────

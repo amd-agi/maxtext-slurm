@@ -24,5 +24,9 @@ export XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_gpu_autotune_level=0 \
     --xla_gpu_reduce_scatter_combine_threshold_bytes=8589934592 \
     --xla_gpu_enable_all_gather_combine_by_dim=false"
 
-# 405B on 64 GPUs leaves narrow HBM headroom; raise client fraction.
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.97
+# 405B on 64 GPUs leaves narrow HBM headroom. Capped at 0.90 (not 0.97) to leave
+# room for RCCL RDMA/GDR GPU-side buffers when RDMA is active
+# (USE_DOCKER_IMAGE_AINIC_DRIVER=false, RoCE over ionic). At 0.97 the run OOMs with
+# HSA_STATUS_ERROR_OUT_OF_RESOURCES once RDMA is on; the socket fallback path tolerated
+# 0.97 only because it buffers in host RAM. 0.90 leaves ~28GB/GPU and ran cleanly.
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
