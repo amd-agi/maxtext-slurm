@@ -1,8 +1,17 @@
-# Llama-3.1-405B 8-Node FP8 Training Run — Report
+# Llama-3.1-405B 8-Node FP8 Training Run (MaxText) — Throughput Baseline
 
-> **TL;DR** — 8-node / **64x MI355X** Llama-3.1-405B **FP8** training, 3 steps, profiled end-to-end with rocprofv3 (GPU trace + kernel statistics). **Steady-state MFU ~32.5%** (~38 s/step, ~644 tokens/s/device, ~1626 TFLOP/s/device). Compute is FP8-GEMM-dominated (~58% of GPU time); RCCL communication is ~21% (with blocking collectives up to ~3.2 s -> overlap opportunity); attention ~10%. Run COMPLETED cleanly; loss descended 12.26 -> 11.91. RDMA ran over the ionic NICs via the surgical libionic mount + `NCCL_IB_QPS_PER_CONNECTION=1`.
+> **TL;DR** — 8-node / **64x MI355X** Llama-3.1-405B **FP8** training on MaxText (JAX/XLA), run
+> **without any profiler** to establish a clean throughput baseline for later tuning. Run
+> **COMPLETED cleanly (exit 0)**, 10 steps. **Steady-state MFU ~32.5%** (~38.1 s/step,
+> ~645 tokens/s/device, ~1626 TFLOP/s/device). RDMA over the AMD Pensando "ionic" NICs via the
+> surgical libionic mount + `NCCL_IB_QPS_PER_CONNECTION=4` (pristine default). **Profiling
+> (jax.profiler / xplane) is intentionally NOT run here — it is a separate follow-up task.**
 
-Run identifier: SLURM job **15697** (2026-06-03). Related docs: [`RCCL_UPGRADE.md`](RCCL_UPGRADE.md), [`EMPTY_STREAM_REPORT.md`](EMPTY_STREAM_REPORT.md), [`ROCPROF_TRACE_REPORT.md`](ROCPROF_TRACE_REPORT.md).
+Cluster: SMCI355 / DLC (partition `Compute-DCPT`). Run identifier: SLURM job **16784** (2026-06-16, 10 steps, no profiler).
+Run dir: `/perf_apps/xuefjian/llama405b_20260616_133330/maxtext/`.
+
+**Nodes (8, explicitly pinned, shared with the Primus baseline run):**
+`smci355-ccs-aus-n01-33, n02-21, n03-33, n04-21, n04-25, n04-29, n04-33, n05-33`
 
 ---
 
@@ -11,10 +20,12 @@ Run identifier: SLURM job **15697** (2026-06-03). Related docs: [`RCCL_UPGRADE.m
 | Component | Version / spec |
 |-----------|----------------|
 | GPUs | 8 nodes x 8 = **64x AMD Instinct MI355X** (gfx950 / CDNA4) |
-| Interconnect | AMD Pensando "ionic" NICs, RoCE/IB (RDMA); intra-node XGMI |
-| ROCm | **7.1.1** (build 7.1.1-38), HIP 7.1.52802 |
-| RCCL | **2.27.7-HEAD:185e78a** (ROCm/rccl PR #2063, "use one side stream per process") |
-| Framework | MaxText on JAX/XLA (`rocm/jax-training:maxtext-v26.2` base, RCCL rebuilt with PR #2063) |
+| Interconnect | AMD Pensando "ionic" NICs, RoCE/RDMA; intra-node XGMI |
+| RCCL | **2.27.7** + ROCm/rccl PR #2063 (one side stream per process) |
+| Framework | MaxText on JAX/XLA |
+| Image | **`rocm/pyt-megatron-lm-jax-nightly-private:maxtext-v26.2-rccl-pr2063`** (AINIC-enabled) |
+| Profiler | **none** (this is a throughput baseline; xplane profiling is a later task) |
+| Kernels | Tensile FP8 GEMM, CK fused attention (BF16) |
 
 ## 2. Model configuration (Llama-3.1-405B)
 
@@ -39,68 +50,55 @@ Run identifier: SLURM job **15697** (2026-06-03). Related docs: [`RCCL_UPGRADE.m
 ## 4. How it was run
 
 ```bash
-NODELIST=<8 nodes> STEPS=3 \
-  ./run_llama3_1_405b.sh \
-    _env_NCCL_IB_QPS_PER_CONNECTION=1 \
-    _env_ROCPROF_TRACE=1 \
-    _env_ROCPROF_TRACES=kernel,rccl,marker
+JOB_WORKSPACE=/perf_apps/xuefjian/llama405b_20260616_133330/maxtext \
+STEPS=10 NODES=8 TAG=baseline \
+NODELIST="smci355-ccs-aus-n01-33,smci355-ccs-aus-n02-21,smci355-ccs-aus-n03-33,smci355-ccs-aus-n04-21,smci355-ccs-aus-n04-25,smci355-ccs-aus-n04-29,smci355-ccs-aus-n04-33,smci355-ccs-aus-n05-33" \
+  ./run_llama3_1_405b.sh
 ```
 
+No profiler flags are passed (MaxText runs profiler-free by default).
 Launch chain: `run_llama3_1_405b.sh` -> `submit.sh` -> `_job.sbatch` (SLURM, 8 nodes) -> `_container.sh` (Docker) -> `_train.sh` -> MaxText.
 
-Key runtime settings (resolved from the log):
+Key runtime settings (pristine; resolved from the log):
 
 | Setting | Value | Why |
 |---------|-------|-----|
-| `NCCL_IB_QPS_PER_CONNECTION` | **1** | ionic NIC QP table is small (`max_qp=4096`); the default 4 QPS x 4 channels overflows it at 8-node scale (`ibv_create_qp: No space left on device`). QPS=1 fits. |
-| `XLA_PYTHON_CLIENT_MEM_FRACTION` | **0.90** | leaves HBM for RCCL/GDR buffers once RDMA is active (0.97 OOMs with `HSA_STATUS_ERROR_OUT_OF_RESOURCES`). |
+| `NCCL_IB_QPS_PER_CONNECTION` | **4** | pristine default (no QPS=1 override). The 8-node run fit the ionic QP table fine at QPS=4. |
+| `XLA_PYTHON_CLIENT_MEM_FRACTION` | **0.90** | leaves HBM for RCCL/GDR buffers once RDMA is active (0.97 OOMs with RDMA on). |
 | `RCCL_MSCCL_ENABLE` / `RCCL_MSCCLPP_ENABLE` | **0 / 0** | avoid `ncclCommSplit` issues with few channels. |
-| `NCCL_NCHANNELS_PER_NET_PEER` | 4 | |
-| `NVTE_FUSED_ATTN` | 1 | CK fused attention |
+| `xla_gpu_autotune_level` | **0** | heuristic kernel selection (faster compile; pristine config). |
+| `NVTE_FUSED_ATTN` / `NVTE_FUSED_ATTN_CK` | 1 / 1 | CK fused attention |
 | ionic provider | surgical host-`libionic` mount (`USE_HOST_IONIC_PROVIDER_ONLY=true`) | RDMA over ionic without clobbering container glibc |
-| rocprofv3 | `--kernel-trace --rccl-trace --marker-trace` | lean domains keep the `.pftrace` under the 1GB perfetto buffer with GPU kernels intact (see `ROCPROF_TRACE_REPORT.md`) |
 
-## 5. Results — performance
+## 5. Results — performance (job 16784, no profiler)
 
 | Step | Step time | TFLOP/s/device | MFU | Tokens/s/device | Loss |
 |------|-----------|----------------|-----|------------------|------|
-| 0 (warmup) | 67.9 s | 914 | 18.27% | 362 | 12.262 |
-| 1 | 37.71 s | 1645 | 32.90% | 651.8 | 12.052 |
-| 2 | 38.62 s | 1606 | 32.12% | 636.4 | 11.906 |
+| 0 (warmup) | 83.75 s | 740.7 | 14.81% | 293.5 | 12.262 |
+| 1 | 36.74 s | 1688.2 | 33.76% | 668.9 | 12.262 |
+| 2 | 37.73 s | 1644.1 | 32.88% | 651.4 | 12.008 |
+| 3 | 37.94 s | 1635.1 | 32.70% | 647.8 | 11.887 |
+| 4 | 38.09 s | 1628.5 | 32.57% | 645.2 | 11.832 |
+| 5 | 38.17 s | 1625.1 | 32.50% | 643.9 | 11.803 |
+| 6 | 38.21 s | 1623.4 | 32.47% | 643.2 | 11.785 |
+| 7 | 38.22 s | 1623.1 | 32.46% | 643.1 | 11.778 |
+| 8 | 38.19 s | 1624.1 | 32.48% | 643.5 | 11.773 |
+| 9 | 38.21 s | 1623.3 | 32.47% | 643.1 | 11.771 |
 
-- **Steady-state (steps 1-2): MFU ~32.5%, ~38 s/step, ~644 tokens/s/device, ~1626 TFLOP/s/device.**
-- Step 0 is the first-iteration warmup (one-time runtime overhead after compile); steps 1-2 are representative.
-- Loss descends monotonically (12.26 -> 12.05 -> 11.91). Status: **COMPLETED** (exit 0).
-- Profiling overhead is negligible: non-profiled 405B runs measured ~31.6-31.9% MFU.
+- **Steady-state (steps 2-9): MFU ~32.5%, ~38.1 s/step, ~645 tokens/s/device, ~1626 TFLOP/s/device.**
+- Global throughput ~645 x 64 ≈ **~41,300 tokens/s**.
+- Step 0 is the first-iteration warmup (one-time runtime overhead after compile). Because there is **no profiler this time, step 2 is clean** (~37.7 s) — in the earlier xplane run step 2 was inflated to ~43 s by the trace dump.
+- Loss descends monotonically (12.262 -> 11.771). Status: **COMPLETED** (exit 0), Wall 9m32s.
 
-## 6. Profiling artifacts
+## 6. Consistency check (clean baseline)
 
-Job directory: `$JOB_WORKSPACE/15697-JAX-llama3.1-405b-run8n-steps_3-...-_env_ROCPROF_TRACES_kernel,rccl,marker/`
+- This run reproduces the historical MaxText good-node numbers (**~33% MFU / ~646 tokens/s/device**) within variance -> established as the **throughput baseline** for subsequent tuning.
+- Stack reproduced end-to-end: RCCL PR #2063 (no empty-stream churn), RDMA over ionic (surgical mount), pristine config (QPS=4 default, autotune level 0, no pipelined flags).
 
-```
-log                                              # training log (per-step metrics, resolved config, env)
-rocprof/<host>/<pid>/<host>/<pid>_results.pftrace # GPU trace, 8 files (~750-766 MB each), 1 per node
-                                                  #   -> open in https://ui.perfetto.dev
-rocprof/<host>/<pid>/<host>/<pid>_kernel_trace.csv # raw per-kernel records (8 files)
-rocprof/kernel_stats.csv                          # aggregated kernel statistics (304 kernels, 7.58M dispatches)
-```
+## 7. Profiling — deferred to a follow-up task
 
-Regenerate the aggregate: `python3 utils/rocprof_kernel_stats.py <job>/rocprof --shorten --top 30`.
+Profiling was intentionally **not** run here to keep this a clean throughput baseline. The
+xplane (`jax.profiler`) capture is a separate next task; rerun with
+`profiler=xplane skip_first_n_steps_for_profiler=1 profiler_steps=1` when profiling is needed.
 
-## 7. Kernel breakdown (cluster-wide, share of GPU time)
-
-| Category | Share | Detail |
-|----------|-------|--------|
-| **FP8 GEMM** (`Cijk_*` Tensile) | **~58%** | F8BS 25.4% + F8B8BS 21.1% + B8F8 11.5% (mostly MT256x256x128) |
-| **RCCL** (`ncclDevKernel`) | **~21%** | individual instances up to **3.2 s** -> exposed/blocking communication |
-| **Attention** (`aiter::fmha_*`) | **~10%** | bwd 6.5% + fwd 3.9% (hd128, causal, BF16) |
-| XLA fusions / transposes / converts | ~9% | `input_convert_transpose`, `input_reduce`, `wrapped_transpose`, ... |
-| BF16 GEMM (`Cijk_*BBS`) | ~0.6% | |
-
-Totals: 304 unique kernels, 7,584,562 dispatches, 7503 s of summed GPU time across the 64 GPUs over 3 steps.
-
-## 8. Observations & next steps
-
-- **RCCL ~21% with multi-second blocking collectives** points to exposed communication. Inspect the Perfetto timeline for compute/comm gaps; candidate levers: collective/compute overlap (latency-hiding scheduler, pipelined collectives), channel/QPS tuning, larger combine thresholds.
-- Compute is **FP8-GEMM-bound (~58%)**, as expected for 405B FP8 on MI355X.
-- This run reproduces the validated stack end-to-end: RCCL PR #2063 (no empty-stream churn), RDMA over ionic (surgical mount + `QPS=1`), and a lean rocprof trace that retains GPU kernels.
+Related: Primus side [`LLAMA31_405B_RUN_REPORT.md`](../Primus/LLAMA31_405B_RUN_REPORT.md) (same 8 nodes, same baseline run).
